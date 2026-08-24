@@ -17,8 +17,11 @@ export default {
       if (url.pathname === "/health") {
         return j({
           ok: true,
-          reasoning: "@cf/openai/gpt-oss-120b",
-          vision: "@cf/meta/llama-3.2-11b-vision-instruct",
+          service: "EARA resilient backend",
+          reasoningPrimary: "@cf/openai/gpt-oss-120b",
+          reasoningCapacityFallback: "@cf/google/gemma-4-26b-a4b-it",
+          visionPrimary: "@cf/google/gemma-4-26b-a4b-it",
+          visionFallback: "@cf/meta/llama-3.2-11b-vision-instruct",
           tts: "@cf/deepgram/aura-1",
           webPrimary: "Tavily direct results",
           tavilyConfigured: !!env.TAVILY_API_KEY
@@ -66,19 +69,41 @@ export default {
 
         const allowed = new Set(["angus", "asteria", "arcas", "orion", "orpheus", "athena", "luna", "zeus", "perseus", "helios", "hera", "stella"]);
         const voice = allowed.has(String(speaker || "").toLowerCase()) ? String(speaker).toLowerCase() : "asteria";
-        const raw = await env.AI.run("@cf/deepgram/aura-1", { text: spoken.slice(0, 220), speaker: voice, encoding: "mp3" }, { returnRawResponse: true });
-        let audio;
-        if (raw instanceof Response) audio = await raw.arrayBuffer();
-        else if (raw instanceof ArrayBuffer) audio = raw;
-        else if (ArrayBuffer.isView(raw)) audio = raw.buffer;
-        else if (raw?.audio && typeof raw.audio === "string") return j({ audio: raw.audio, mime: "audio/mpeg", speaker: voice, spoken }, 200, cors);
-        if (!audio) return j({ error: "Aura returned no playable audio." }, 500, cors);
-        return j({ audio: bytesToBase64(new Uint8Array(audio)), mime: "audio/mpeg", speaker: voice, spoken }, 200, cors);
+
+        try {
+          const raw = await env.AI.run("@cf/deepgram/aura-1", {
+            text: spoken.slice(0, 220),
+            speaker: voice,
+            encoding: "mp3"
+          }, { returnRawResponse: true });
+
+          let audio;
+          if (raw instanceof Response) audio = await raw.arrayBuffer();
+          else if (raw instanceof ArrayBuffer) audio = raw;
+          else if (ArrayBuffer.isView(raw)) audio = raw.buffer;
+          else if (raw?.audio && typeof raw.audio === "string") {
+            return j({ audio: raw.audio, mime: "audio/mpeg", speaker: voice, spoken }, 200, cors);
+          }
+          if (!audio) return j({ error: "Aura returned no playable audio." }, 500, cors);
+          return j({ audio: bytesToBase64(new Uint8Array(audio)), mime: "audio/mpeg", speaker: voice, spoken }, 200, cors);
+        } catch (e) {
+          const status = isCapacityError(e) ? 503 : 500;
+          return j({ error: isCapacityError(e) ? "Premium voice capacity is temporarily busy." : String(e?.message || e), code: isCapacityError(e) ? "capacity" : "tts" }, status, cors);
+        }
       }
 
       if (url.pathname === "/chat" && request.method === "POST") {
-        const { text, image, memory, personality } = await request.json();
+        const { text, image, memory, personality, source } = await request.json();
         if (!text) return j({ error: "Missing text" }, 400, cors);
+
+        const plainText = stripScreenPrefix(text);
+        if (isHearCheck(plainText)) {
+          return chatReply("Yes, I can hear you.", {
+            visionUsed: false,
+            webUsed: false,
+            model: "local capability response"
+          }, cors, "Yes, I can hear you.");
+        }
 
         const styles = {
           helpful: "Be broadly helpful, practical, warm, and clear.",
@@ -91,48 +116,50 @@ export default {
 
         const style = styles[personality] || styles.helpful;
         const safeMemory = String(memory || "(no stored memory yet)")
-          .replace(/EARA:.*(?:large language model|cannot visually|can't visually|cannot see|can't see|one-way communication|text-based inputs only).*/gi, "EARA: [obsolete capability statement ignored]")
+          .replace(/EARA:.*(?:large language model|cannot visually|can't visually|cannot see|can't see|one-way communication|text-based inputs only|can't listen|cannot listen).*/gi, "EARA: [obsolete capability statement ignored]")
           .slice(-9000);
 
         const hasImage = typeof image === "string" && image.startsWith("data:image/");
-        const wantsWeb = isWebIntent(text);
-        const system = `You are EARA, an active real-time camera, voice, memory and live-web assistant. You are talking with the user right now. ${style} Never reveal hidden reasoning, planning, tool-call notes, search steps, chain-of-thought, or phrases such as "Search web", "Search query", "Open", "We need to", "Let's verify", or "Now craft answer". Give only the finished answer. Never claim you are only a text model, one-way tool, unable to converse, or fundamentally unable to search online. Keep useful details on screen while EARA separately speaks a short summary.\n\nEARA MEMORY:\n${safeMemory}`;
+        const wantsWeb = isWebIntent(plainText);
+        const system = `You are EARA, an active real-time camera, microphone, memory and live-web assistant. You are talking with the user right now. ${style} If the user asks whether you can hear them, say yes because EARA receives their speech. Never give a lecture about raw audio or being a language model. Never reveal hidden reasoning, planning, tool-call notes, search steps, chain-of-thought, or phrases such as "Search web", "Search query", "Open", "We need to", "Let's verify", or "Now craft answer". Give only the finished user-facing answer. Never claim you are only a text model, one-way tool, unable to converse, or fundamentally unable to search online. Keep useful details on screen while EARA separately speaks a short summary.\n\nEARA MEMORY:\n${safeMemory}`;
 
         let scene = "";
+        let visionModel = "";
         if (hasImage) {
-          const vision = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
-            messages: [
-              { role: "system", content: "Inspect this live camera frame. Return only a concise factual identification of the important visible item, text, brand, title, model number, color, or other details useful for the user's request. No reasoning or AI limitations." },
-              { role: "user", content: `User request: ${text}` }
-            ],
-            image,
-            max_tokens: 220,
-            temperature: 0.15
-          });
-          scene = cleanModelText(extract(vision));
+          const vr = await runVisionResilient(env, image, plainText, source === "screen");
+          scene = cleanModelText(vr.text);
+          visionModel = vr.model;
         }
 
         if (wantsWeb) {
           if (env.TAVILY_API_KEY) {
             try {
-              const query = buildSearchQuery(text, scene);
+              if (!scene && isVisualFollowupSearch(plainText) && hasImage) {
+                return chatReply("I can see the camera, but I couldn't identify the item clearly enough to search it. Hold the label or title steady and ask me to find it again.", {
+                  visionUsed: false,
+                  webUsed: false,
+                  model: "vision unavailable"
+                }, cors, "I couldn't identify the item clearly enough. Hold it steady and try again.");
+              }
+
+              const query = buildSearchQuery(plainText, scene, safeMemory);
               const data = await tavilySearchRaw(env.TAVILY_API_KEY, query);
-              const answer = formatTavilyAnswer(data, scene, text);
+              const answer = formatTavilyAnswer(data, scene, plainText);
               if (answer) {
                 return chatReply(answer, {
-                  visionUsed: hasImage,
+                  visionUsed: !!scene,
                   webUsed: true,
                   webProvider: "Tavily",
-                  model: "Tavily direct"
+                  model: `Tavily direct${visionModel ? " + " + visionModel : ""}`
                 }, cors, "I found it online. The links and details are on screen.");
               }
             } catch (e) {
-              // fall through to AI answer below
+              // Continue to the secondary web path below.
             }
           }
 
           try {
-            const searchPrompt = `${system}\n\n${scene ? `CURRENT CAMERA OBSERVATION:\n${scene}\n\n` : ""}USER REQUEST:\n${text}\n\nGive only the final user-facing answer. If you cannot perform the live lookup, say that the live search failed on this request. Do not show planning or search steps.`;
+            const searchPrompt = `${system}\n\n${scene ? `CURRENT ${source === "screen" ? "SCREEN" : "CAMERA"} OBSERVATION:\n${scene}\n\n` : ""}USER REQUEST:\n${plainText}\n\nGive only the final user-facing answer with direct URLs. Do not show planning or search steps.`;
             const web = await env.AI.run("openai/gpt-5.5", {
               input: searchPrompt,
               max_output_tokens: 450,
@@ -140,33 +167,140 @@ export default {
               reasoning: { effort: "low" }
             }, { gateway: { id: env.AI_GATEWAY_ID || "default" } });
             const webAnswer = cleanModelText(extract(web));
-            if (webAnswer) return chatReply(webAnswer, { visionUsed: hasImage, webUsed: true, webProvider: "Cloudflare AI Gateway", model: "openai/gpt-5.5" }, cors);
+            if (webAnswer) {
+              return chatReply(webAnswer, {
+                visionUsed: !!scene,
+                webUsed: true,
+                webProvider: "Cloudflare AI Gateway",
+                model: "openai/gpt-5.5"
+              }, cors);
+            }
           } catch (_) {}
 
-          return chatReply("Live search failed on this request. Try the search again in a moment.", { visionUsed: hasImage, webUsed: false, model: "fallback" }, cors, "The live search failed. Try again in a moment.");
+          return chatReply("Live search failed on this request. Try the search again in a moment.", {
+            visionUsed: !!scene,
+            webUsed: false,
+            model: "web fallback"
+          }, cors, "The live search failed. Try again in a moment.");
         }
 
-        const userContext = `${scene ? `CURRENT LIVE CAMERA OBSERVATION:\n${scene}\n\n` : ""}USER:\n${text}`;
-        const result = await env.AI.run("@cf/openai/gpt-oss-120b", {
+        const userContext = `${scene ? `CURRENT ${source === "screen" ? "SHARED SCREEN" : "LIVE CAMERA"} OBSERVATION:\n${scene}\n\n` : ""}USER:\n${plainText}`;
+        const rr = await runReasoningResilient(env, {
           messages: [
-            { role: "system", content: system + (hasImage ? "\nA current camera observation is included. Treat it as what EARA sees now." : "") },
+            { role: "system", content: system + (scene ? "\nA current visual observation is included. Treat it as what EARA sees now." : "") },
             { role: "user", content: userContext }
           ],
           max_tokens: 520,
           temperature: 0.4
         });
 
-        let answer = cleanModelText(extract(result));
-        if (hasImage && isFalseVisionRefusal(answer)) answer = scene || "I received the live camera frame, but the visual description failed on this request.";
-        return chatReply(answer || "I couldn't generate a response.", { visionUsed: hasImage, webUsed: false, model: "@cf/openai/gpt-oss-120b" }, cors);
+        let answer = cleanModelText(extract(rr.result));
+        if (scene && isFalseVisionRefusal(answer)) answer = scene || "I received the live camera frame, but the visual description failed on this request.";
+        return chatReply(answer || "I couldn't generate a response.", {
+          visionUsed: !!scene,
+          webUsed: false,
+          model: rr.model
+        }, cors);
       }
 
-      return j({ ok: true, service: "EARA Cloudflare AI backend", reasoning: "GPT-OSS 120B", vision: "Llama 3.2 Vision", voice: "Deepgram Aura", web: "Tavily direct" }, 200, cors);
+      return j({
+        ok: true,
+        service: "EARA resilient backend",
+        reasoning: "GPT-OSS 120B with Gemma capacity fallback",
+        vision: "Gemma 4 with Llama fallback",
+        voice: "Deepgram Aura with iPhone fallback",
+        web: "Tavily direct"
+      }, 200, cors);
     } catch (e) {
-      return j({ error: String(e?.message || e) }, 500, cors);
+      if (isCapacityError(e)) {
+        return j({
+          error: "AI capacity is temporarily busy. EARA will retry/fallback automatically on the next request.",
+          code: "capacity"
+        }, 503, cors);
+      }
+      return j({ error: String(e?.message || e), code: "server" }, 500, cors);
     }
   }
 };
+
+async function runVisionResilient(env, image, userText, isScreen) {
+  const kind = isScreen ? "shared screen" : "live camera frame";
+  const visionPrompt = `Inspect this ${kind}. Return only a concise factual identification of the important visible item, text, brand, title, model number, color, warning, or details useful for the user's request. No reasoning or AI limitations.`;
+
+  try {
+    const result = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", {
+      messages: [
+        { role: "system", content: visionPrompt },
+        {
+          role: "user",
+          content: [
+            { type: "text", text: `User request: ${userText}` },
+            { type: "image_url", image_url: { url: image } }
+          ]
+        }
+      ],
+      max_completion_tokens: 260,
+      temperature: 0.15
+    });
+    const text = extract(result);
+    if (text) return { text, model: "@cf/google/gemma-4-26b-a4b-it" };
+  } catch (e) {
+    // Try Llama vision before surfacing a Gemma vision failure.
+  }
+
+  try {
+    const result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
+      messages: [
+        { role: "system", content: visionPrompt },
+        { role: "user", content: `User request: ${userText}` }
+      ],
+      image,
+      max_tokens: 240,
+      temperature: 0.15
+    });
+    return { text: extract(result), model: "@cf/meta/llama-3.2-11b-vision-instruct" };
+  } catch (e) {
+    if (isCapacityError(e)) {
+      await sleep(350);
+      const result = await env.AI.run("@cf/meta/llama-3.2-11b-vision-instruct", {
+        messages: [
+          { role: "system", content: visionPrompt },
+          { role: "user", content: `User request: ${userText}` }
+        ],
+        image,
+        max_tokens: 220,
+        temperature: 0.15
+      });
+      return { text: extract(result), model: "@cf/meta/llama-3.2-11b-vision-instruct retry" };
+    }
+    throw e;
+  }
+}
+
+async function runReasoningResilient(env, payload) {
+  try {
+    const result = await env.AI.run("@cf/openai/gpt-oss-120b", payload);
+    return { result, model: "@cf/openai/gpt-oss-120b" };
+  } catch (e) {
+    if (!isCapacityError(e)) throw e;
+  }
+
+  await sleep(250);
+  try {
+    const result = await env.AI.run("@cf/openai/gpt-oss-120b", payload);
+    return { result, model: "@cf/openai/gpt-oss-120b retry" };
+  } catch (e) {
+    if (!isCapacityError(e)) throw e;
+  }
+
+  const fallbackPayload = {
+    messages: payload.messages,
+    max_completion_tokens: Math.min(Number(payload.max_tokens || 520), 700),
+    temperature: payload.temperature ?? 0.4
+  };
+  const result = await env.AI.run("@cf/google/gemma-4-26b-a4b-it", fallbackPayload);
+  return { result, model: "@cf/google/gemma-4-26b-a4b-it capacity fallback" };
+}
 
 function chatReply(text, meta, cors, speechOverride = "") {
   const full = String(text || "").trim();
@@ -249,14 +383,28 @@ function makeSpeech(input, web = false) {
   return first.replace(/\s+/g, " ").trim().slice(0, 210);
 }
 
+function isHearCheck(s) {
+  return /^(?:hey robot[, ]*)?(?:can you hear me|do you hear me|are you listening|can you listen to me|you hear me)\??$/i.test(String(s || "").trim());
+}
+
 function isWebIntent(s) {
   return /\b(search|search for|look up|lookup|find|locate|show me where|online|internet|web|amazon|ebay|walmart|best buy|buy|purchase|order|price|cost|deal|seller|store|where can i get|where can i buy|where do i get|link|website|latest|current|today|news|weather|stock price|score|near me|open now|available|availability|send me the link|give me the link)\b/i.test(String(s || ""));
 }
 
-function buildSearchQuery(text, scene) {
+function isVisualFollowupSearch(s) {
+  return /\b(this|that|these|those|what i'?m holding|what am i holding|in my hand|shown|showing|camera|see)\b/i.test(String(s || ""));
+}
+
+function buildSearchQuery(text, scene, memory) {
   const t = String(text || "").trim();
   const s = String(scene || "").trim();
-  return s ? `${t}\nExact visible item details: ${s}` : t;
+  if (s) return `${t}\nExact visible item details: ${s}`;
+
+  if (/^(?:give|send|show).*(?:link|price)|^(?:find|buy|order) (?:it|that|this)\b/i.test(t)) {
+    const m = String(memory || "").split(/\n\n/).slice(-3).join(" ").replace(/\s+/g, " ").slice(-900);
+    if (m) return `${t}\nRecent conversation context: ${m}`;
+  }
+  return t;
 }
 
 async function tavilySearchRaw(key, query) {
@@ -277,8 +425,20 @@ async function tavilySearchRaw(key, query) {
   return JSON.parse(text);
 }
 
+function stripScreenPrefix(s) {
+  return String(s || "").replace(/^SCREEN SHARE ACTIVE\.[\s\S]*?request:\s*/i, "").trim();
+}
+
+function isCapacityError(e) {
+  return /(?:3040|capacity temporarily exceeded|out of capacity|capacity is temporarily|temporarily exceeded|AI capacity)/i.test(String(e?.message || e));
+}
+
 function isFalseVisionRefusal(s) {
   return /(?:can(?:not|'t) (?:visually )?(?:see|observe|view|access)|do not have (?:the )?capability to (?:visually )?(?:see|observe)|text-based inputs only|large language model.*(?:see|visual))/i.test(String(s || ""));
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function bytesToBase64(bytes) {
@@ -294,7 +454,11 @@ function extract(d) {
   if (d?.response) return String(d.response).trim();
   if (d?.result?.response) return String(d.result.response).trim();
   if (d?.text) return String(d.text).trim();
-  if (d?.choices?.[0]?.message?.content) return String(d.choices[0].message.content).trim();
+  if (d?.choices?.[0]?.message?.content) {
+    const c = d.choices[0].message.content;
+    if (typeof c === "string") return c.trim();
+    if (Array.isArray(c)) return c.map(x => x?.text || "").filter(Boolean).join("\n").trim();
+  }
   if (Array.isArray(d?.output)) {
     const parts = [];
     for (const item of d.output) for (const c of item?.content || []) if (c?.text) parts.push(c.text);
