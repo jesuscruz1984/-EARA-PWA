@@ -8,6 +8,22 @@
   function micAvailable(){return !!(window.getEaraStream?.()&&window.isEaraMicEnabled?.())}
   function ensurePlayer(){if(player)return player;player=document.createElement('audio');player.setAttribute('playsinline','');player.preload='auto';player.style.display='none';document.body.appendChild(player);return player}
   function updateSpeakerButton(){setTalk(speakerEnabled?'Speaker: ON':'Speaker: OFF')}
+  function spokenVersion(text){
+    const raw=String(text||'').trim();if(!raw)return '';
+    const hadLink=/(?:https?:\/\/|www\.)/i.test(raw);
+    let s=raw
+      .replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1')
+      .replace(/(?:https?:\/\/|www\.)\S+/gi,'')
+      .replace(/\b(?:direct\s+)?(?:amazon|product|purchase|buy|website)?\s*(?:link|url)\s*[:\-]?\s*/gi,'')
+      .replace(/[\*_`#>|]+/g,' ')
+      .replace(/\s+/g,' ').trim();
+    if(!s&&hadLink)return 'I found the link and put it on screen.';
+    const sentences=s.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[s];
+    let short=sentences.slice(0,2).join(' ').trim();
+    if(short.length>240){short=short.slice(0,240);const cut=short.lastIndexOf(' ');if(cut>170)short=short.slice(0,cut);short=short.replace(/[,:;\-\s]+$/,'')+'.'}
+    if(hadLink&&!/\b(?:link|on screen|screen)\b/i.test(short))short+=(/[.!?]$/.test(short)?'':' .')+' I found the link and put it on screen.';
+    return short.replace(/\s+\./g,'.').trim();
+  }
   function scheduleRestart(delay=450){clearTimeout(restartTimer);if(!handsFree||speaking||!recognition||!micAvailable())return;restartTimer=setTimeout(()=>{if(!handsFree||speaking||starting||!micAvailable())return;try{starting=true;recognition.start()}catch(_){starting=false;scheduleRestart(1000)}},delay)}
   function setup(){if(!SR||recognition)return;recognition=new SR();recognition.continuous=false;recognition.interimResults=false;recognition.lang='en-US';recognition.maxAlternatives=1;
     recognition.onstart=()=>{starting=false;if(handsFree&&!speaking){setState('Listening — say “Hey Robot”');updateSpeakerButton();try{badge('Hey Robot Ready')}catch(_){}}};
@@ -15,10 +31,10 @@
     recognition.onerror=e=>{starting=false;if(e.error==='not-allowed'||e.error==='service-not-allowed'){handsFree=false;setState('Speech permission required.');return}if(!speaking)scheduleRestart(e.error==='no-speech'?250:750)};
     recognition.onend=()=>{starting=false;if(handsFree&&!speaking)scheduleRestart(400)};
   }
-  function localSpeak(text){if(!speakerEnabled)return false;try{speechSynthesis.cancel();speechSynthesis.resume();const u=new SpeechSynthesisUtterance(String(text||''));u.lang='en-US';u.volume=1;u.rate=1;const voices=speechSynthesis.getVoices();const v=voices.find(x=>/^en-US$/i.test(x.lang)&&/Samantha|Ava|Aaron|Alex|Siri/i.test(x.name))||voices.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;speechSynthesis.speak(u);return true}catch(_){return false}}
+  function localSpeak(text){if(!speakerEnabled)return false;const msg=spokenVersion(text);if(!msg)return false;try{speechSynthesis.cancel();speechSynthesis.resume();const u=new SpeechSynthesisUtterance(msg);u.lang='en-US';u.volume=1;u.rate=1;const voices=speechSynthesis.getVoices();const v=voices.find(x=>/^en-US$/i.test(x.lang)&&/Samantha|Ava|Aaron|Alex|Siri/i.test(x.name))||voices.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;speechSynthesis.speak(u);return true}catch(_){return false}}
   async function primeAudio(){if(!speakerEnabled)return false;const p=ensurePlayer();try{p.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';p.volume=0.01;await p.play();p.pause();p.currentTime=0;p.volume=1;audioPrimed=true;return true}catch(_){return false}}
   async function cloudSpeak(text){
-    const msg=String(text||'').trim();if(!msg||!speakerEnabled)return;lastSpoken=msg;
+    const full=String(text||'').trim();const msg=spokenVersion(full);if(!msg||!speakerEnabled)return;lastSpoken=full;
     speaking=true;clearTimeout(restartTimer);if(recognition){try{recognition.abort()}catch(_){}}
     setState('EARA speaking…');try{badge('Speaking')}catch(_){}
     try{
@@ -31,7 +47,7 @@
       try{await p.play();audioPrimed=true}catch(err){if(localSpeak(msg)){done();return}throw err}
     }catch(_){speaking=false;setState(audioPrimed?'Voice playback failed — tap Speak Again':'iPhone blocked automatic audio. Any single tap on the app will unlock speaker for this session.');try{badge(audioPrimed?'Voice Error':'Audio Tap Needed')}catch(_){};if(handsFree&&micAvailable())scheduleRestart(650)}
   }
-  window.say=cloudSpeak;window.unlockEaraVoice=()=>primeAudio();window.isEaraSpeakerEnabled=()=>speakerEnabled;
+  window.say=cloudSpeak;window.unlockEaraVoice=()=>primeAudio();window.isEaraSpeakerEnabled=()=>speakerEnabled;window.getEaraSpokenVersion=spokenVersion;
   function enable(){setup();if(!SR){setState('Hands-free recognition is not supported in this browser.');return}handsFree=true;updateSpeakerButton();scheduleRestart(250);primeAudio()}
   function disable(){handsFree=false;clearTimeout(restartTimer);starting=false;if(recognition){try{recognition.abort()}catch(_){}}}
   window.addEventListener('eara-media-ready',enable);window.addEventListener('eara-mic-enabled',enable);window.addEventListener('eara-mic-disabled',disable);
