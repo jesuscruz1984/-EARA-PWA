@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#07111d">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="EARA AI">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <title>EARA AI</title>
+  <style>
+    :root{--bg:#07111d;--panel:#0f1a2a;--panel2:#132238;--text:#f5f8fb;--muted:#8da0b8;--accent:#57b8ff;--ok:#38d39f;--danger:#ff6b6b}
+    *{box-sizing:border-box}
+    html,body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",Segoe UI,sans-serif}
+    body{min-height:100vh;padding:env(safe-area-inset-top) 14px env(safe-area-inset-bottom)}
+    .app{max-width:760px;margin:0 auto;padding:12px 0 24px}
+    header{display:flex;justify-content:space-between;gap:12px;align-items:center;margin:8px 2px 16px}
+    h1{font-size:24px;margin:0}.sub{color:var(--muted);font-size:13px;margin-top:2px}
+    .badge{border:1px solid #20324b;background:#0d1827;border-radius:999px;padding:8px 10px;font-size:12px;white-space:nowrap}
+    .card{background:linear-gradient(180deg,var(--panel2),var(--panel));border:1px solid #1b2b42;border-radius:22px;overflow:hidden;margin-bottom:14px}
+    .videoWrap{position:relative;background:#0a1421;aspect-ratio:16/10}
+    video{width:100%;height:100%;object-fit:cover;background:#08111d}
+    .overlay{position:absolute;left:12px;top:12px;background:rgba(0,0,0,.5);padding:6px 9px;border-radius:999px;font-size:11px}
+    .status{position:absolute;right:12px;top:12px;background:rgba(0,0,0,.5);padding:6px 9px;border-radius:999px;font-size:11px}
+    .pad{padding:14px}
+    .grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    button{border:0;border-radius:14px;min-height:48px;padding:11px 12px;font-size:14px;font-weight:650;background:#1a2a40;color:var(--text)}
+    button.primary{background:var(--accent);color:#06101b}
+    button.danger{background:#392229;color:#ffdede}
+    button:disabled{opacity:.45}
+    .row{display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .tiny{font-size:12px;color:var(--muted)}
+    .sectionTitle{font-size:16px;font-weight:700;margin-bottom:10px}
+    .memory{border-left:2px solid var(--accent);padding:2px 0 2px 10px;margin:12px 0}
+    .memory time{display:block;color:var(--muted);font-size:11px;margin-bottom:3px}
+    textarea,input{width:100%;background:#0b1726;color:var(--text);border:1px solid #223650;border-radius:13px;padding:12px;font-size:16px}
+    .micLevel{height:8px;background:#0b1726;border-radius:999px;overflow:hidden;margin-top:10px}
+    .micBar{height:100%;width:0;background:var(--ok);transition:width .08s linear}
+    nav{position:sticky;bottom:10px;background:rgba(11,23,38,.92);backdrop-filter:blur(12px);border:1px solid #1e3049;border-radius:18px;padding:7px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+    nav button{min-height:44px;background:transparent;font-size:12px} nav button.active{background:#18304a}
+    .hidden{display:none}
+    .notice{font-size:12px;line-height:1.45;color:#a9b8c9}
+    @media(max-width:520px){.grid{grid-template-columns:1fr}.hideSmall{display:none}}
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div><h1>EARA AI</h1><div class="sub">Wearable assistant prototype</div></div>
+    <div class="badge" id="connBadge">● Ready</div>
+  </header>
+
+  <section id="liveTab">
+    <div class="card">
+      <div class="videoWrap">
+        <video id="video" playsinline muted autoplay></video>
+        <div class="overlay" id="visionLabel">LIVE VISION</div>
+        <div class="status" id="bufferLabel">Buffer: off</div>
+      </div>
+      <div class="pad">
+        <div class="grid">
+          <button class="primary" id="startBtn">Start Camera + Mic</button>
+          <button id="rememberBtn" disabled>Remember This</button>
+          <button class="danger" id="privacyBtn" disabled>Privacy Mode</button>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div><div class="tiny">Microphone activity</div><div class="micLevel"><div class="micBar" id="micBar"></div></div></div>
+          <div class="tiny" id="runtime">00:00</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card"><div class="pad">
+      <div class="sectionTitle">Prototype behavior</div>
+      <div class="notice">This version uses your iPhone camera and microphone as the stand-in for the EARA earpiece. It keeps a short in-memory capture buffer while the page is open and saves snapshots + notes only when you tap “Remember This.”</div>
+    </div></div>
+  </section>
+
+  <section id="memoryTab" class="hidden">
+    <div class="card"><div class="pad">
+      <div class="row"><div class="sectionTitle">Memory Timeline</div><button id="clearMemBtn">Clear</button></div>
+      <div id="memoryList"><div class="tiny">No memories saved yet.</div></div>
+    </div></div>
+  </section>
+
+  <section id="tasksTab" class="hidden">
+    <div class="card"><div class="pad">
+      <div class="sectionTitle">Tasks</div>
+      <div style="display:flex;gap:8px"><input id="taskInput" placeholder="Add a task..."><button class="primary" id="addTaskBtn">Add</button></div>
+      <div id="taskList" style="margin-top:12px"></div>
+    </div></div>
+  </section>
+
+  <section id="settingsTab" class="hidden">
+    <div class="card"><div class="pad">
+      <div class="sectionTitle">Settings</div>
+      <label class="tiny">Memory note</label>
+      <textarea id="memoryNote" rows="3" placeholder="Optional note saved with each memory"></textarea>
+      <div class="notice" style="margin-top:12px">For the real product, this screen would include buffer length, adaptive frame rate, cloud AI, local AI, encryption, device pairing, and battery modes.</div>
+    </div></div>
+  </section>
+
+  <nav>
+    <button class="active" data-tab="liveTab">Live</button>
+    <button data-tab="memoryTab">Memory</button>
+    <button data-tab="tasksTab">Tasks</button>
+    <button data-tab="settingsTab">Settings</button>
+  </nav>
+</div>
+
+<canvas id="snap" class="hidden"></canvas>
+
+<script>
+let stream=null, audioCtx=null, analyser=null, meterTimer=null, startedAt=null, runtimeTimer=null, privacy=false;
+const $=s=>document.querySelector(s);
+const video=$("#video"), startBtn=$("#startBtn"), rememberBtn=$("#rememberBtn"), privacyBtn=$("#privacyBtn");
+
+function nowText(){return new Date().toLocaleString()}
+function loadMemories(){return JSON.parse(localStorage.getItem("earaMemories")||"[]")}
+function saveMemories(m){localStorage.setItem("earaMemories",JSON.stringify(m));renderMemories()}
+function renderMemories(){
+  const list=$("#memoryList"), items=loadMemories();
+  if(!items.length){list.innerHTML='<div class="tiny">No memories saved yet.</div>';return}
+  list.innerHTML=items.map((m,i)=>`<div class="memory"><time>${m.time}</time>${m.img?`<img src="${m.img}" alt="Saved memory" style="width:100%;border-radius:12px;margin:6px 0">`:''}<div>${m.note||"Saved visual moment"}</div></div>`).join("")
+}
+function loadTasks(){return JSON.parse(localStorage.getItem("earaTasks")||"[]")}
+function saveTasks(t){localStorage.setItem("earaTasks",JSON.stringify(t));renderTasks()}
+function renderTasks(){
+  const list=$("#taskList"), tasks=loadTasks();
+  list.innerHTML=tasks.length?tasks.map((t,i)=>`<div class="row" style="padding:10px 0;border-bottom:1px solid #1f3047"><span>${t}</span><button data-del="${i}">Done</button></div>`).join(""):'<div class="tiny">No tasks yet.</div>';
+  list.querySelectorAll("[data-del]").forEach(b=>b.addEventListener("click",()=>{const a=loadTasks();a.splice(+b.dataset.del,1);saveTasks(a)}))
+}
+async function startMedia(){
+  if(stream){stopMedia();return}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1280},height:{ideal:720}},audio:true});
+    video.srcObject=stream; await video.play();
+    startBtn.textContent="Stop Camera + Mic"; rememberBtn.disabled=false; privacyBtn.disabled=false;
+    $("#connBadge").textContent="● Live"; $("#bufferLabel").textContent="Buffer: active";
+    startedAt=Date.now(); runtimeTimer=setInterval(()=>{const s=Math.floor((Date.now()-startedAt)/1000);$("#runtime").textContent=String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0")},1000);
+    setupMeter();
+  }catch(e){alert("Camera/microphone access failed. Use Safari over HTTPS and allow Camera + Microphone permissions.")}
+}
+function stopMedia(){
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}
+  if(audioCtx){audioCtx.close();audioCtx=null}
+  clearInterval(meterTimer);clearInterval(runtimeTimer);$("#micBar").style.width="0%";video.srcObject=null;
+  startBtn.textContent="Start Camera + Mic";rememberBtn.disabled=true;privacyBtn.disabled=true;$("#connBadge").textContent="● Ready";$("#bufferLabel").textContent="Buffer: off";$("#runtime").textContent="00:00";
+}
+function setupMeter(){
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  const src=audioCtx.createMediaStreamSource(stream); analyser=audioCtx.createAnalyser(); analyser.fftSize=256;src.connect(analyser);
+  const data=new Uint8Array(analyser.frequencyBinCount);
+  meterTimer=setInterval(()=>{analyser.getByteFrequencyData(data);const avg=data.reduce((a,b)=>a+b,0)/data.length;$("#micBar").style.width=Math.min(100,avg/1.4)+"%"},100);
+}
+function remember(){
+  if(!stream||privacy)return;
+  const c=$("#snap"), ctx=c.getContext("2d"); c.width=video.videoWidth||1280;c.height=video.videoHeight||720;
+  ctx.drawImage(video,0,0,c.width,c.height);
+  const img=c.toDataURL("image/jpeg",.72), note=$("#memoryNote").value.trim();
+  const items=loadMemories();items.unshift({time:nowText(),img,note});saveMemories(items.slice(0,30));
+  rememberBtn.textContent="Saved ✓";setTimeout(()=>rememberBtn.textContent="Remember This",1200);
+}
+function togglePrivacy(){
+  privacy=!privacy;
+  stream?.getTracks().forEach(t=>t.enabled=!privacy);
+  privacyBtn.textContent=privacy?"Resume Live Feed":"Privacy Mode";
+  $("#visionLabel").textContent=privacy?"PRIVACY ON":"LIVE VISION";
+  $("#connBadge").textContent=privacy?"● Private":"● Live";
+}
+startBtn.addEventListener("click",startMedia);rememberBtn.addEventListener("click",remember);privacyBtn.addEventListener("click",togglePrivacy);
+$("#clearMemBtn").addEventListener("click",()=>{if(confirm("Clear all saved EARA memories?"))saveMemories([])});
+$("#addTaskBtn").addEventListener("click",()=>{const i=$("#taskInput"),v=i.value.trim();if(!v)return;const t=loadTasks();t.unshift(v);saveTasks(t);i.value=""});
+document.querySelectorAll("nav button").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll("nav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");["liveTab","memoryTab","tasksTab","settingsTab"].forEach(id=>$("#"+id).classList.toggle("hidden",id!==b.dataset.tab))}));
+renderMemories();renderTasks();
+if("serviceWorker" in navigator){navigator.serviceWorker.register("sw.js").catch(()=>{})}
+</script>
+</body>
+</html>
