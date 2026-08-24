@@ -3,14 +3,7 @@ const DEFAULT_BACKEND='https://eara-pwa.jesuscruz1984.workers.dev';
 const MEMKEY='earaMemoryV2';
 const PERSONAKEY='earaPersona';
 let stream=null,lastReply='',cameraEnabled=true,micEnabled=true;
-const personalities={
-  helpful:'Helpful Assistant',
-  concise:'Fast & Concise',
-  expert:'Expert Analyst',
-  companion:'Friendly Companion',
-  fieldtech:'Field Technician',
-  observer:'Curious Observer'
-};
+const personalities={helpful:'Helpful Assistant',concise:'Fast & Concise',expert:'Expert Analyst',companion:'Friendly Companion',fieldtech:'Field Technician',observer:'Curious Observer'};
 function backend(){return DEFAULT_BACKEND}
 function badge(x){$('#badge').textContent='● '+x}
 function memory(){try{return JSON.parse(localStorage.getItem(MEMKEY)||'[]')}catch(_){return []}}
@@ -25,22 +18,22 @@ function renderMemory(){const arr=memory();$('#memoryCount').textContent=`${arr.
 async function chooseWideCamera(){try{const devices=await navigator.mediaDevices.enumerateDevices();const cams=devices.filter(d=>d.kind==='videoinput');const wide=cams.find(d=>/ultra\s*wide|0\.5|wide angle|back.*wide/i.test(d.label));if(!wide)return false;const vt=stream?.getVideoTracks?.()[0];if(vt)vt.stop();const vs=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:wide.deviceId},width:{ideal:1920},height:{ideal:1080}},audio:false});const newTrack=vs.getVideoTracks()[0];stream.addTrack(newTrack);video.srcObject=stream;await video.play();return true}catch(_){return false}}
 async function applyMinZoom(){try{const t=stream?.getVideoTracks?.()[0],cap=t?.getCapabilities?.();if(cap?.zoom){await t.applyConstraints({advanced:[{zoom:cap.zoom.min}]})}}catch(_){}}
 async function startMedia(silent=false){if(stream)return true;try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:true});video.srcObject=stream;await video.play();await chooseWideCamera();await applyMinZoom();cameraEnabled=true;micEnabled=true;$('#cam').textContent='WIDE VISION';$('#cameraBtn').textContent='Disable Camera';$('#micBtn').textContent='Disable Mic';$('#permissionBtn').classList.add('hidden');$('#mediaControls').classList.remove('hidden');badge('Live');$('#state').textContent='Starting hands-free…';window.dispatchEvent(new CustomEvent('eara-media-ready'));return true}catch(e){if(!silent){$('#permissionBtn').classList.remove('hidden');$('#state').textContent='Tap Enable Camera + Mic once to grant permission.'}return false}}
-function stopCamera(){if(!stream)return;const tracks=stream.getVideoTracks();cameraEnabled=!cameraEnabled;tracks.forEach(t=>t.enabled=cameraEnabled);$('#cameraBtn').textContent=cameraEnabled?'Disable Camera':'Enable Camera';$('#cam').textContent=cameraEnabled?'WIDE VISION':'CAMERA PAUSED'}
+function stopCamera(){if(!stream)return;cameraEnabled=!cameraEnabled;stream.getVideoTracks().forEach(t=>t.enabled=cameraEnabled);$('#cameraBtn').textContent=cameraEnabled?'Disable Camera':'Enable Camera';$('#cam').textContent=cameraEnabled?'WIDE VISION':'CAMERA PAUSED'}
 function stopMic(){if(!stream)return;micEnabled=!micEnabled;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);$('#micBtn').textContent=micEnabled?'Disable Mic':'Enable Mic';if(micEnabled)window.dispatchEvent(new CustomEvent('eara-mic-enabled'));else window.dispatchEvent(new CustomEvent('eara-mic-disabled'));$('#state').textContent=micEnabled?'Listening — say “Hey Robot”':'Microphone disabled'}
 function snap(){if(!stream||!cameraEnabled)return null;const c=$('#canvas');c.width=video.videoWidth||960;c.height=video.videoHeight||540;c.getContext('2d').drawImage(video,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.62)}
 function fail(e){setReply('Connection error: '+(e.message||e));$('#state').textContent='Error';badge('Error');$('#ai').textContent='Error'}
-async function askAI(text){const q=String(text||'').trim();if(!q)return;try{$('#state').textContent='Thinking…';badge('Thinking');const image=snap();const persona=localStorage.getItem(PERSONAKEY)||'helpful';const mem=memoryContext(q);const r=await fetch(backend()+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q,image,memory:mem,personality:persona})});const raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status+': '+raw);const j=JSON.parse(raw),answer=j.text||'No reply';setReply(answer);addMemory({user:q,assistant:answer,vision:!!image,persona});$('#transcript').textContent='You: '+q;$('#ai').textContent='AI ready';badge('Live');say(answer);return answer}catch(e){fail(e);throw e}}
-function say(t){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);speechSynthesis.speak(u)}
+async function askAI(text){const q=String(text||'').trim();if(!q)return;try{$('#state').textContent='Thinking…';badge('Thinking');const image=snap();const persona=localStorage.getItem(PERSONAKEY)||'helpful';const mem=memoryContext(q);const r=await fetch(backend()+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q,image,memory:mem,personality:persona})});const raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status+': '+raw);const j=JSON.parse(raw),answer=j.text||'No reply';setReply(answer);addMemory({user:q,assistant:answer,vision:!!image,persona});$('#transcript').textContent='You: '+q;$('#ai').textContent='AI ready';badge('Live');if(window.say)window.say(answer);return answer}catch(e){fail(e);throw e}}
 async function copyText(t){try{await navigator.clipboard.writeText(t);badge('Copied');setTimeout(()=>badge('Live'),900)}catch(_){}}
-function setPersona(v){localStorage.setItem(PERSONAKEY,v);$('#persona').value=v;$('#personaLive').textContent=personalities[v]||v}
-$('#permissionBtn').onclick=()=>startMedia(false);
+function setPersona(v){localStorage.setItem(PERSONAKEY,v);if($('#persona'))$('#persona').value=v;if($('#personaLiveSelect'))$('#personaLiveSelect').value=v;$('#personaLive').textContent=personalities[v]||v}
+$('#permissionBtn').onclick=()=>{window.unlockEaraVoice?.();startMedia(false)};
 $('#cameraBtn').onclick=stopCamera;$('#micBtn').onclick=stopMic;
 $('#ask').onclick=()=>{const t=$('#typed').value.trim();if(t){$('#typed').value='';askAI(t)}};
 $('#typed').addEventListener('keydown',e=>{if(e.key==='Enter')$('#ask').click()});
-$('#speak').onclick=()=>say(lastReply);$('#copyReply').onclick=()=>copyText(lastReply);
+$('#speak').onclick=()=>window.say?.(lastReply);$('#copyReply').onclick=()=>copyText(lastReply);
 $('#copyMemory').onclick=()=>copyText(memory().map(m=>`[${new Date(m.ts).toLocaleString()}]\nYou: ${m.user}\nEARA: ${m.assistant}${m.vision?'\nVision frame processed':''}`).join('\n\n'));
 $('#clearMemory').onclick=()=>{if(confirm('Clear all EARA memory saved on this device?'))saveMemory([])};
-$('#persona').onchange=e=>setPersona(e.target.value);
+if($('#persona'))$('#persona').onchange=e=>setPersona(e.target.value);
+const controls=$('#mediaControls');if(controls){const wrap=document.createElement('div');wrap.style.marginTop='10px';wrap.innerHTML='<div class="small" style="margin-bottom:6px">Agent personality</div><select id="personaLiveSelect" style="width:100%"><option value="helpful">Helpful Assistant</option><option value="concise">Fast & Concise</option><option value="expert">Expert Analyst</option><option value="companion">Friendly Companion</option><option value="fieldtech">Field Technician</option><option value="observer">Curious Observer</option></select>';controls.insertAdjacentElement('afterend',wrap);$('#personaLiveSelect').onchange=e=>setPersona(e.target.value)}
 const initialPersona=localStorage.getItem(PERSONAKEY)||'helpful';setPersona(initialPersona);renderMemory();
 document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['live','memory','tasks','settings'].forEach(id=>$('#'+id).classList.toggle('hidden',id!==b.dataset.tab));if(b.dataset.tab==='memory')renderMemory()});
 if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
