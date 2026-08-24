@@ -57,7 +57,7 @@ export default {
               const tr=formatTavilyResults(data);
               if(tr){
                 try{
-                  const synth=await env.AI.run("@cf/zai-org/glm-4.7-flash",{messages:[{role:"system",content:system+"\nYou have fresh Tavily web results below. Use them as current evidence. Answer directly, include current prices when present, and include the best direct URLs. Never say you cannot search online."},{role:"user",content:`USER REQUEST:\n${text}\n\n${scene?`VISUAL OBSERVATION:\n${scene}\n\n`:""}CURRENT TAVILY RESULTS:\n${tr}`}],max_completion_tokens:420,temperature:0.25});
+                  const synth=await env.AI.run("@cf/zai-org/glm-4.7-flash",{messages:[{role:"system",content:system+"\nYou have fresh Tavily web results below. Use them as current evidence. Answer directly, include current prices when present, and include the best direct URLs. Never say you cannot search online."},{role:"user",content:`USER REQUEST:\n${text}\n\n${scene?`VISUAL OBSERVATION:\n${scene}\n\n`:""}CURRENT TAVILY RESULTS:\n${tr}`}],max_tokens:420,temperature:0.25});
                   const a=extract(synth);if(a)return chatReply(a,{visionUsed:hasImage&&!!scene,webUsed:true,webProvider:"Tavily",model:"@cf/zai-org/glm-4.7-flash",modelMode:"auto",visionError:visionError||undefined},cors)
                 }catch(e){
                   if(!isQuotaError(e))tavilyError="AI summary: "+String(e?.message||e);
@@ -79,12 +79,12 @@ export default {
         const userContext=`${scene?`CURRENT ${source==="screen"?"SHARED SCREEN":"CAMERA"} OBSERVATION:\n${scene}\n\n`:""}USER:\n${text}`;
         const primary=wantsDeep?"@cf/openai/gpt-oss-120b":"@cf/zai-org/glm-4.7-flash";
         try{
-          const result=await env.AI.run(primary,{messages:[{role:"system",content:system+(scene?"\nA current visual observation is included. Treat it as what EARA sees now.":"")},{role:"user",content:userContext}],max_completion_tokens:wantsDeep?500:320,temperature:wantsDeep?0.35:0.45});
+          const result=await env.AI.run(primary,{messages:[{role:"system",content:system+(scene?"\nA current visual observation is included. Treat it as what EARA sees now.":"")},{role:"user",content:userContext}],max_tokens:wantsDeep?500:320,temperature:wantsDeep?0.35:0.45});
           let answer=extract(result);if(scene&&isFalseVisionRefusal(answer))answer=scene||answer;
           return chatReply(answer||"I couldn't generate a response.",{visionUsed:hasImage&&!!scene,webUsed:false,model:primary,modelMode:wantsDeep?"deep":"auto"},cors)
         }catch(e){
           if(wantsDeep&&!isQuotaError(e)){
-            try{const light=await env.AI.run("@cf/zai-org/glm-4.7-flash",{messages:[{role:"system",content:system},{role:"user",content:userContext}],max_completion_tokens:320,temperature:0.4});return chatReply(extract(light)||"I couldn't generate a response.",{visionUsed:hasImage&&!!scene,webUsed:false,model:"@cf/zai-org/glm-4.7-flash",modelMode:"auto-fallback"},cors)}catch(e2){e=e2}
+            try{const light=await env.AI.run("@cf/zai-org/glm-4.7-flash",{messages:[{role:"system",content:system},{role:"user",content:userContext}],max_tokens:320,temperature:0.4});return chatReply(extract(light)||"I couldn't generate a response.",{visionUsed:hasImage&&!!scene,webUsed:false,model:"@cf/zai-org/glm-4.7-flash",modelMode:"auto-fallback"},cors)}catch(e2){e=e2}
           }
           if(isQuotaError(e))return chatReply("Today's free Cloudflare AI allowance has been used. EARA's free iPhone voice and Tavily web search remain available; normal AI conversation resumes after Cloudflare's daily reset.",{visionUsed:false,webUsed:false,aiLimited:true,modelMode:"limit"},cors);
           throw e
