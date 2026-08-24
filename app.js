@@ -24,7 +24,8 @@ function memory(){try{return JSON.parse(localStorage.getItem(MEMKEY)||'[]')}catc
 function saveMemory(arr){localStorage.setItem(MEMKEY,JSON.stringify(arr.slice(-500)));const count=$('#memoryCount');if(count)count.textContent=`${Math.min(arr.length,500)} saved interactions`;const panel=$('#memory');if(panel&&!panel.classList.contains('hidden'))renderMemory()}
 function addMemory(entry){const arr=memory();arr.push({...entry,ts:new Date().toISOString()});saveMemory(arr)}
 function words(s){return new Set(String(s||'').toLowerCase().match(/[a-z0-9]{3,}/g)||[])}
-function isMemoryRecallIntent(q){return /\b(previous|earlier|past|old|before|last time|our notes|my notes|saved notes|previous notes|memory|memories|history|we discussed|we talked|what did we|what have we|go through (?:our )?notes|look through (?:our )?notes|search (?:our )?notes|from (?:our )?notes|saved interactions|recall|remember when)\b/i.test(String(q||''))}
+function isMemoryRecallIntent(q){return /\b(previous|earlier|past|old|before|last time|our notes|my notes|saved notes|previous notes|memory notes|memory|memories|history|we discussed|we talked|what did we|what have we|go (?:to|through) (?:our )?(?:memory )?notes|look through (?:our )?(?:memory )?notes|review (?:our )?notes|search (?:our )?notes|from (?:our )?notes|saved interactions|recall|remember when)\b/i.test(String(q||''))}
+function isReadAloudIntent(q){return /\b(read (?:me )?(?:that|this|the|it)?\s*(?:document|paper|letter|form|transcription|notes?)?(?: back)?(?: to me)?|read (?:the )?whole thing|read it all|read all of it|read everything|read aloud|say it all|speak (?:the )?(?:whole|full)|go (?:to|through) (?:our )?(?:memory )?notes and read)\b/i.test(String(q||''))}
 function memoryContext(query,deep=false){
   const arr=memory().filter(m=>!staleCapability.test(String(m.assistant||'')));
   const raw=String(query||'').toLowerCase(),terms=[...words(query)].filter(w=>!memoryStop.has(w));
@@ -47,9 +48,11 @@ function getDocSession(){try{return JSON.parse(localStorage.getItem(DOCSESSIONKE
 function saveDocSession(s){localStorage.setItem(DOCSESSIONKEY,JSON.stringify(s))}
 function startDocSession(){const s={active:true,complete:false,pages:[],startedAt:new Date().toISOString()};saveDocSession(s);return s}
 function addDocPage(text,isLast=false){const s=getDocSession();s.active=true;const clean=String(text||'').trim();if(clean&&s.pages[s.pages.length-1]!==clean)s.pages.push(clean);if(isLast){s.complete=true;s.active=false}s.updatedAt=new Date().toISOString();saveDocSession(s);return s}
-function documentHistory(){return getDocSession().pages.map((p,i)=>`--- PAGE ${i+1} ---\n${p}`).join('\n\n').slice(-30000)}
+function documentHistory(){return getDocSession().pages.map((p,i)=>`Page ${i+1}.\n${p}`).join('\n\n').slice(-60000)}
+function savedDocumentForReading(){const s=getDocSession();return Array.isArray(s.pages)?s.pages.map((p,i)=>`Page ${i+1}. ${String(p||'').trim()}`).filter(Boolean).join('\n\n').trim():''}
 function resolveDocumentMode(q){
   const t=String(q||'').trim(),s=getDocSession();
+  if(isReadAloudIntent(t)&&s.pages.length&&/\b(document|paper|letter|form|transcription|whole thing|it all|all of it|everything|read (?:that|this|it) back)\b/i.test(t))return 'readback';
   if(/\b(?:this is (?:the )?)?(?:last|final) page\b/i.test(t))return s.pages.length?'last':'start-last';
   if(s.active&&/^(?:next page|next|continue|continue reading|keep reading|read next|next section|go on)\b/i.test(t))return 'continue';
   if(/\b(?:read|transcribe|scan)\b[\s\S]{0,35}\b(?:this|the|that)?\s*(?:paper|document|letter|form|notice|page|contract|receipt)\b/i.test(t)||/^read\s+(?:this|that|it)\b/i.test(t))return 'start';
@@ -92,16 +95,23 @@ async function askAI(text){
   const q=String(text||'').trim();if(!q)return;
   try{
     const docMode=resolveDocumentMode(q);if(docMode==='start'||docMode==='start-last')startDocSession();
-    const deepMemory=isMemoryRecallIntent(q),session=getDocSession();
+    const deepMemory=isMemoryRecallIntent(q),readAloud=isReadAloudIntent(q),session=getDocSession();
+    if(docMode==='readback'){
+      const full=savedDocumentForReading();
+      if(!full){const msg='I could not find a saved document transcription in our notes. Show me the document and say “Eara, read this paper” first.';setReply(msg);lastSpeech=msg;window.say?.(msg);return msg}
+      const answer=`Saved document transcription (${session.pages.length} ${session.pages.length===1?'page':'pages'}):\n\n${full}`;
+      setReply(answer);lastSpeech=full;addMemory({user:q,assistant:`Read the saved ${session.pages.length}-page document transcription aloud.`,persona:localStorage.getItem(PERSONAKEY)||'helpful',document:true,readAloud:true});
+      $('#transcript').textContent='You: '+q;$('#ai').textContent='MEMORY DOCUMENT';badge('Eara Ready');setState('Reading saved document aloud…');window.say?.(full,{full:true});return answer
+    }
     setState(deepMemory?'Searching previous notes…':(['start','start-last','continue','last'].includes(docMode)?'Reading document carefully…':'Thinking…'));
     badge(deepMemory?'Reading notes…':(['start','start-last','continue','last'].includes(docMode)?'Reading document…':'Thinking'));$('#ai').textContent=deepMemory?'MEMORY search…':(docMode?'DOCUMENT reading…':'AI thinking…');
     const useVision=needsVision(q,docMode),image=useVision?snap(['start','start-last','continue','last'].includes(docMode)):null,persona=localStorage.getItem(PERSONAKEY)||'helpful',mem=memoryContext(q,deepMemory);
     const requestText=screenSharing?`SCREEN SHARE ACTIVE. The attached image is the user's current shared screen, not the camera. Inspect the screen and answer the user's request: ${q}`:q;
-    const j=await fetchChat({text:requestText,image,memory:mem,memoryMode:deepMemory?'deep':'normal',memoryCount:memory().length,personality:persona,visionActive:!!image,source:screenSharing?'screen':'camera',documentMode:docMode,documentHistory:documentHistory(),documentComplete:session.complete,documentPageCount:session.pages.length});
+    const j=await fetchChat({text:requestText,image,memory:mem,memoryMode:deepMemory?'deep':'normal',memoryCount:memory().length,personality:persona,visionActive:!!image,source:screenSharing?'screen':'camera',documentMode:docMode,documentHistory:documentHistory(),documentComplete:session.complete,documentPageCount:session.pages.length,readAloud});
     if(j.documentText){addDocPage(j.documentText,docMode==='last'||docMode==='start-last')}
-    const answer=j.text||'No reply';lastSpeech=String(j.speech||answer);setReply(answer);addMemory({user:q,assistant:answer,vision:!!image,persona,source:screenSharing?'screen':'camera',document:!!j.documentText});
+    const answer=j.text||'No reply';lastSpeech=String(readAloud?answer:(j.speech||answer));setReply(answer);addMemory({user:q,assistant:answer,vision:!!image,persona,source:screenSharing?'screen':'camera',document:!!j.documentText});
     $('#transcript').textContent='You: '+q;$('#ai').textContent=j.memoryUsed?'MEMORY + AI':(j.documentText?'DOCUMENT + AI':(j.webUsed?'WEB + AI':(screenSharing&&image?'SCREEN + AI':(image?'VISION + AI':'AI ready'))));
-    badge(screenSharing?'Screen Live':'Eara Ready');setState(window.isEaraActive?.()?'Eara active — keep talking':'Listening for “Eara”');window.say?.(lastSpeech);return answer;
+    badge(screenSharing?'Screen Live':'Eara Ready');setState(window.isEaraActive?.()?'Eara active — keep talking':'Listening for “Eara”');window.say?.(lastSpeech,{full:readAloud});return answer;
   }catch(e){fail(e);throw e}
   finally{if(micEnabled&&!window.isEaraSpeakerEnabled?.())setTimeout(()=>window.forceEaraListening?.(),150)}
 }
