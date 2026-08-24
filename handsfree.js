@@ -19,16 +19,24 @@
 
   function ensurePlayer(){if(player)return player;player=document.createElement('audio');player.setAttribute('playsinline','');player.preload='auto';player.style.display='none';document.body.appendChild(player);return player}
   function updateSpeakerButton(){setTalk(speakerEnabled?'Speaker: ON':'Speaker: OFF')}
-  function spokenVersion(text){
+  function spokenVersion(text,full=false){
     const raw=String(text||'').trim();if(!raw)return '';
     const hadLink=/(?:https?:\/\/|www\.)/i.test(raw);
-    let s=raw.replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/\b(?:direct\s+)?(?:amazon|product|purchase|buy|website)?\s*(?:link|url)\s*[:\-]?\s*/gi,'').replace(/[\*_`#>|]+/g,' ').replace(/\s+/g,' ').trim();
-    if(!s&&hadLink)return 'I found the link and put it in the text notes on screen.';
-    const sentences=s.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[s];
+    let clean=raw.replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/\b(?:direct\s+)?(?:amazon|product|purchase|buy|website)?\s*(?:link|url)\s*[:\-]?\s*/gi,'').replace(/[\*_\`#>|]+/g,' ').replace(/\s+/g,' ').trim();
+    if(!clean&&hadLink)return 'I found the link and put it in the text notes on screen.';
+    if(full)return clean;
+    const sentences=clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[clean];
     let short=sentences.slice(0,2).join(' ').trim();
     if(short.length>270){short=short.slice(0,270);const cut=short.lastIndexOf(' ');if(cut>210)short=short.slice(0,cut);short=short.replace(/[,:;\-\s]+$/,'')+'.'}
     if(hadLink&&!/\b(?:link|links|text notes|on screen|screen)\b/i.test(short))short+=(/[.!?]$/.test(short)?'':' .')+' The links are in the text notes on screen.';
     return short.replace(/\s+\./g,'.').trim();
+  }
+  function speechChunks(text,max=260){
+    const clean=spokenVersion(text,true);if(!clean)return [];
+    const sentences=clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[clean],out=[];let current='';
+    const pushWords=part=>{for(const word of part.split(/\s+/)){if(!word)continue;if(current&&current.length+word.length+1>max){out.push(current.trim());current=''}current+=(current?' ':'')+word}};
+    for(const sentence of sentences){if(sentence.length>max){if(current){out.push(current.trim());current=''}pushWords(sentence);continue}if(current&&current.length+sentence.length+1>max){out.push(current.trim());current=''}current+=(current?' ':'')+sentence.trim()}
+    if(current)out.push(current.trim());return out.filter(Boolean);
   }
 
   function clearActiveTimer(){clearTimeout(activeTimer);activeTimer=null}
@@ -60,20 +68,25 @@
     try{p.load();await p.play();audioPrimed=true;setState('EARA speaking…');setBadge('Speaking');return true}catch(_){revokeObjectUrl();setState('EARA speaking…');setBadge('Speaking');if(localSpeak(msg,finish))return true;finish();return false}
   }
 
-  async function cloudSpeak(text){
-    const full=String(text||'').trim(),msg=spokenVersion(full);if(!msg||!speakerEnabled){if(active)armActive();if(handsFree&&micAvailable())scheduleRestart(70);return}
+  async function cloudSpeak(text,options={}){
+    const full=!!options?.full,msg=spokenVersion(text,full),chunks=full?speechChunks(msg):[spokenVersion(msg)].filter(Boolean);
+    if(!chunks.length||!speakerEnabled){if(active)armActive();if(handsFree&&micAvailable())scheduleRestart(70);return}
     speaking=true;clearTimeout(restartTimer);try{recognition?.abort()}catch(_){}setState('Preparing voice…');setBadge('Loading voice…');
-    let doneCalled=false;const done=()=>{if(doneCalled)return;doneCalled=true;speaking=false;if(active)armActive();if(handsFree&&micAvailable()){setState(idleState());setBadge(idleBadge());scheduleRestart(80)}};
-    const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),PREMIUM_TTS_TIMEOUT_MS);
-    try{
-      const r=await fetch('https://eara-pwa.jesuscruz1984.workers.dev/tts?raw=1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:msg,speaker:window.getEaraVoice?.()||'asteria'}),cache:'no-store',signal:controller.signal});
-      clearTimeout(timeout);if(!r.ok)throw new Error(await r.text());const type=(r.headers.get('content-type')||'').toLowerCase();let blob;
-      if(type.includes('audio/'))blob=await r.blob();else{const j=await r.json();if(!j.audio)throw new Error('No audio returned');blob=audioBlobFromBase64(j.audio,j.mime||'audio/mpeg')}
-      const played=await playBlob(blob,done,msg);if(!played)done();
-    }catch(_){
-      clearTimeout(timeout);setState('EARA speaking…');setBadge('Speaking');
-      if(!localSpeak(msg,done)){speaking=false;setState(audioPrimed?'Voice playback failed — tap Speak Again':'Tap anywhere once to unlock iPhone audio.');setBadge(audioPrimed?'Voice Error':'Audio Tap Needed');if(handsFree&&micAvailable())scheduleRestart(100)}
-    }
+    const finishAll=()=>{speaking=false;if(active)armActive();if(handsFree&&micAvailable()){setState(idleState());setBadge(idleBadge());scheduleRestart(80)}};
+    const playOne=async(chunk,index)=>new Promise(async resolve=>{
+      let resolved=false;const finish=()=>{if(resolved)return;resolved=true;resolve()};
+      const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),PREMIUM_TTS_TIMEOUT_MS);
+      try{
+        const r=await fetch('https://eara-pwa.jesuscruz1984.workers.dev/tts?raw=1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:chunk,speaker:window.getEaraVoice?.()||'asteria'}),cache:'no-store',signal:controller.signal});
+        clearTimeout(timeout);if(!r.ok)throw new Error(await r.text());const type=(r.headers.get('content-type')||'').toLowerCase();let blob;
+        if(type.includes('audio/'))blob=await r.blob();else{const j=await r.json();if(!j.audio)throw new Error('No audio returned');blob=audioBlobFromBase64(j.audio,j.mime||'audio/mpeg')}
+        setState(chunks.length>1?`EARA speaking — part ${index+1} of ${chunks.length}…`:'EARA speaking…');setBadge('Speaking');const played=await playBlob(blob,finish,chunk);if(!played)finish();
+      }catch(_){
+        clearTimeout(timeout);setState(chunks.length>1?`EARA speaking — part ${index+1} of ${chunks.length}…`:'EARA speaking…');setBadge('Speaking');
+        if(!localSpeak(chunk,finish))finish();
+      }
+    });
+    try{for(let i=0;i<chunks.length&&speakerEnabled;i++)await playOne(chunks[i],i)}finally{finishAll()}
   }
 
   window.say=cloudSpeak;window.unlockEaraVoice=primeAudio;window.isEaraSpeakerEnabled=()=>speakerEnabled;window.getEaraSpokenVersion=spokenVersion;window.isEaraActive=()=>active;
