@@ -15,7 +15,7 @@ export default {
     try{
       if(url.pathname==='/health')return j({
         ok:true,
-        service:'EARA smart-memory document backend v23',
+        service:'EARA memory read-aloud backend v24',
         reasoningPrimary:'@cf/openai/gpt-oss-120b',
         reasoningFast:'@cf/google/gemma-4-26b-a4b-it',
         visionPrimary:'@cf/google/gemma-4-26b-a4b-it',
@@ -44,7 +44,7 @@ export default {
 
       if(url.pathname==='/tts'&&request.method==='POST'){
         const {text,speaker}=await request.json();if(!text)return j({error:'Missing text'},400,cors);
-        const spoken=makeSpeech(text);if(!spoken)return j({error:'Nothing to speak'},400,cors);
+        const spoken=makeTtsSpeech(text);if(!spoken)return j({error:'Nothing to speak'},400,cors);
         const allowed=new Set(['angus','asteria','arcas','orion','orpheus','athena','luna','zeus','perseus','helios','hera','stella']);
         const voice=allowed.has(String(speaker||'').toLowerCase())?String(speaker).toLowerCase():'asteria';
         try{
@@ -63,7 +63,7 @@ export default {
 
       if(url.pathname==='/chat'&&request.method==='POST'){
         const body=await request.json();
-        const {text,image,memory,personality,source,memoryMode,memoryCount,documentMode,documentHistory,documentComplete,documentPageCount}=body;
+        const {text,image,memory,personality,source,memoryMode,memoryCount,documentMode,documentHistory,documentComplete,documentPageCount,readAloud}=body;
         if(!text)return j({error:'Missing text'},400,cors);
         const plainText=stripScreenPrefix(text);
         if(isHearCheck(plainText))return chatReply('Yes, I can hear you.',{visionUsed:false,webUsed:false,model:'local capability response'},cors,'Yes, I can hear you.');
@@ -81,7 +81,7 @@ export default {
         const style=styles[personality]||styles.helpful;
         const memLimit=deepMemory?16000:5000;
         const safeMemory=String(memory||'(no stored memory yet)').replace(/EARA:.*(?:large language model|cannot visually|can't visually|cannot see|can't see|one-way communication|text-based inputs only|can't listen|cannot listen).*/gi,'EARA: [obsolete capability statement ignored]').slice(-memLimit);
-        const memoryRule=deepMemory?`The user explicitly asked about prior EARA notes. Treat EARA MEMORY as retrieved saved notes from ${Number(memoryCount||0)} stored interactions. Search across the supplied matches, combine repeated facts, preserve useful dates/names/numbers, and mention conflicts if the notes disagree. Do not search the web unless the user explicitly asks for current online information. Do not say you cannot access previous notes. If the supplied notes do not contain the answer, say that the requested fact was not found in the saved EARA notes.`:'';
+        const memoryRule=deepMemory?`The user explicitly asked about prior EARA notes. Treat EARA MEMORY as retrieved saved notes from ${Number(memoryCount||0)} stored interactions. Search across the supplied matches, combine repeated facts, preserve useful dates/names/numbers, and mention conflicts if the notes disagree. Do not search the web unless the user explicitly asks for current online information. Do not say you cannot access previous notes. If the supplied notes do not contain the answer, say that the requested fact was not found in the saved EARA notes. ${readAloud?'The user explicitly asked you to read retrieved content aloud. Return the requested retrieved wording in full, in natural reading order; do not replace it with a short summary. Omit raw URLs unless the user specifically asks to hear them.':'Follow the requested action: review and answer, summarize, or retrieve verbatim as asked.'}`:'';
         const system=`You are EARA, an active real-time camera, microphone, memory and live-web assistant. You are talking with the user right now. ${style} Answer quickly and directly, but do not sacrifice task understanding for speed. Before answering, identify whether the user wants a factual answer, full document reading, previous-note recall, web search, or analysis. ${memoryRule} If the user asks whether you can hear them, say yes because EARA receives their speech. Never reveal hidden reasoning, planning, tool-call notes, search steps, chain-of-thought, or phrases such as "Search web", "Search query", "Open", "We need to", "Let's verify", or "Now craft answer". Give only the finished user-facing answer. Never claim you are only a text model, one-way tool, unable to converse, or fundamentally unable to search online. Keep useful details on screen while EARA separately speaks a concise but useful summary.\n\nEARA MEMORY:\n${safeMemory}`;
 
         const hasImage=typeof image==='string'&&image.startsWith('data:image/');
@@ -132,12 +132,12 @@ export default {
         const userContext=`${scene?`CURRENT ${source==='screen'?'SHARED SCREEN':'LIVE CAMERA'} OBSERVATION:\n${scene}\n\n`:''}USER:\n${plainText}`;
         const messages=[{role:'system',content:system+(scene?'\nA current visual observation is included. Treat it as what EARA sees now.':'')},{role:'user',content:userContext}];
         const fast=!deepMemory&&isFastPrompt(plainText,personality,!!scene);
-        const rr=fast?await runFastReasoning(env,messages):await runReasoningResilient(env,{messages,max_tokens:deepMemory?560:360,temperature:deepMemory?0.25:0.35});
+        const rr=fast?await runFastReasoning(env,messages):await runReasoningResilient(env,{messages,max_tokens:deepMemory?(readAloud?1100:650):360,temperature:deepMemory?0.25:0.35});
         let answer=cleanModelText(extract(rr.result));if(scene&&isFalseVisionRefusal(answer))answer=scene||'I received the live camera frame, but the visual description failed on this request.';
         return chatReply(answer||"I couldn't generate a response.",{visionUsed:!!scene,webUsed:false,memoryUsed:deepMemory,model:rr.model},cors);
       }
 
-      return j({ok:true,service:'EARA smart-memory document backend v23',reasoning:'Fast Gemma routing + GPT-OSS 120B complex reasoning',vision:'Gemma 4 with Llama fallback',voice:'Deepgram Aura raw audio with quick iPhone fallback',web:'Tavily direct',memory:'deep note retrieval',document:'multi-page read-before-summary'},200,cors);
+      return j({ok:true,service:'EARA memory read-aloud backend v24',reasoning:'Fast Gemma routing + GPT-OSS 120B complex reasoning',vision:'Gemma 4 with Llama fallback',voice:'Deepgram Aura raw audio with quick iPhone fallback',web:'Tavily direct',memory:'deep note retrieval',document:'multi-page read-before-summary'},200,cors);
     }catch(e){if(isCapacityError(e))return j({error:'AI capacity is temporarily busy. EARA will retry/fallback automatically on the next request.',code:'capacity'},503,cors);return j({error:String(e?.message||e),code:'server'},500,cors)}
   }
 };
@@ -172,6 +172,7 @@ function conciseIdentity(scene){let s=cleanLine(scene||'');if(!s)return '';s=s.r
 function cleanLine(s){return String(s||'').replace(/[\r\n]+/g,' ').replace(/\s+/g,' ').trim()}
 function findPrice(s){const m=String(s||'').match(/(?:US\$|\$)\s?\d{1,5}(?:,\d{3})*(?:\.\d{2})?/i);return m?m[0].replace(/\s+/g,''):''}
 function cleanModelText(input){let s=String(input||'').trim();if(!s)return '';const bad=/^(?:search web|search query|search result|search|open|provide link|we need to|let'?s (?:search|open|verify|produce)|now craft answer|now produce|spoken summary|on-screen details)\b/i;const lines=s.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);s=lines.filter(x=>!bad.test(x)).join('\n').trim();return s.replace(/^\*\*Spoken Summary:\*\*\s*/i,'').trim()}
+function makeTtsSpeech(input){return cleanModelText(String(input||'').trim()).replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/[\*_`#>|]+/g,' ').replace(/\s+/g,' ').trim().slice(0,600)}
 function makeSpeech(input,web=false){const raw=cleanModelText(String(input||'').trim());if(!raw)return '';const hadLink=/(?:https?:\/\/|www\.)/i.test(raw),price=findPrice(raw);let clean=raw.replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/[\*_`#>|]+/g,' ').replace(/^\s*\d+[.)]\s*/gm,'').replace(/^\s*[-•]\s*/gm,'').replace(/\s+/g,' ').trim();const sentences=clean.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[clean];let speech=sentences.slice(0,2).join(' ').trim();if(!speech||speech.length<3)speech='I found the information.';if(speech.length>275){speech=speech.slice(0,275);const cut=speech.lastIndexOf(' ');if(cut>215)speech=speech.slice(0,cut);speech=speech.replace(/[,;:\-\s]+$/,'.')}if((web||hadLink)&&price&&!speech.includes(price))speech+=` One price I found is ${price}.`;if((web||hadLink)&&!/\b(?:link|links|text notes|on screen|screen)\b/i.test(speech))speech+=' The links are in the text notes on screen.';return speech.replace(/\s+/g,' ').trim().slice(0,315)}
 function isHearCheck(s){return /^(?:(?:eara|era|aira)[, ]*)?(?:can you hear me|do you hear me|are you listening|can you listen to me|you hear me)\??$/i.test(String(s||'').trim())}
 function isWebIntent(s){return /\b(search|search for|look up|lookup|find|locate|show me where|online|internet|web|amazon|ebay|walmart|best buy|buy|purchase|order|price|cost|deal|seller|store|where can i get|where can i buy|where do i get|link|website|latest|current|today|news|weather|stock price|score|near me|open now|available|availability|send me the link|give me the link)\b/i.test(String(s||''))}
