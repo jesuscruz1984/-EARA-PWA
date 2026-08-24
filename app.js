@@ -89,7 +89,18 @@ function needsVision(q,docMode=''){if(isMemoryRecallIntent(q)&&!docMode)return f
 
 function friendlyError(message){const s=String(message||'');if(/3040|capacity temporarily exceeded|out of capacity|code["']?:["']?capacity/i.test(s))return 'AI capacity is temporarily busy. Try again in a few seconds.';if(/Tavily 4\d\d/i.test(s))return 'Live web search had a provider error. Try that search again.';if(/HTTP 5\d\d/i.test(s))return 'EARA hit a temporary server issue. Try again in a moment.';return 'Connection issue. Try again.'}
 function fail(e){setReply(friendlyError(e?.message||e));setState(micEnabled?'Listening for “Eara”':'Error');badge('Temporary Error');$('#ai').textContent='AI retry available';if(micEnabled)setTimeout(()=>window.forceEaraListening?.(),250)}
-async function fetchChat(payload){let lastRaw='';for(let attempt=0;attempt<2;attempt++){const r=await fetch(backend()+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'}),raw=await r.text();lastRaw=raw;if(r.ok)return JSON.parse(raw);const retryable=r.status>=500&&/3040|capacity|temporarily|busy/i.test(raw);if(retryable&&attempt===0){await sleep(250);continue}throw new Error('HTTP '+r.status+': '+raw)}throw new Error(lastRaw||'Request failed')}
+async function fetchChat(payload){
+  let lastRaw='',lastError=null;
+  for(let attempt=0;attempt<3;attempt++){
+    try{
+      const r=await fetch(backend()+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),cache:'no-store'}),raw=await r.text();lastRaw=raw;
+      if(r.ok){const data=JSON.parse(raw);if(data?.text||data?.speech)return data;lastError=new Error('EARA received an empty answer');}
+      else{lastError=new Error('HTTP '+r.status+': '+raw);if(r.status<500)throw lastError}
+    }catch(e){lastError=e}
+    if(attempt<2){setState(`AI retry ${attempt+2} of 3…`);badge('Reconnecting…');await sleep(250*(attempt+1))}
+  }
+  throw lastError||new Error(lastRaw||'Request failed');
+}
 
 async function askAI(text){
   const q=String(text||'').trim();if(!q)return;
