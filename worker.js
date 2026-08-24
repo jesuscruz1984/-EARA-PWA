@@ -15,7 +15,7 @@ export default {
     try{
       if(url.pathname==='/health')return j({
         ok:true,
-        service:'EARA memory read-aloud backend v24',
+        service:'EARA resilient reasoning backend v25',
         reasoningPrimary:'@cf/openai/gpt-oss-120b',
         reasoningFast:'@cf/google/gemma-4-26b-a4b-it',
         visionPrimary:'@cf/google/gemma-4-26b-a4b-it',
@@ -137,8 +137,8 @@ export default {
         return chatReply(answer||"I couldn't generate a response.",{visionUsed:!!scene,webUsed:false,memoryUsed:deepMemory,model:rr.model},cors);
       }
 
-      return j({ok:true,service:'EARA memory read-aloud backend v24',reasoning:'Fast Gemma routing + GPT-OSS 120B complex reasoning',vision:'Gemma 4 with Llama fallback',voice:'Deepgram Aura raw audio with quick iPhone fallback',web:'Tavily direct',memory:'deep note retrieval',document:'multi-page read-before-summary'},200,cors);
-    }catch(e){if(isCapacityError(e))return j({error:'AI capacity is temporarily busy. EARA will retry/fallback automatically on the next request.',code:'capacity'},503,cors);return j({error:String(e?.message||e),code:'server'},500,cors)}
+      return j({ok:true,service:'EARA resilient reasoning backend v25',reasoning:'Fast Gemma routing + GPT-OSS 120B complex reasoning',vision:'Gemma 4 with Llama fallback',voice:'Deepgram Aura raw audio with quick iPhone fallback',web:'Tavily direct',memory:'deep note retrieval',document:'multi-page read-before-summary'},200,cors);
+    }catch(e){if(isCapacityError(e)||/All EARA reasoning models were unavailable/i.test(String(e?.message||e)))return j({error:'EARA’s reasoning services are temporarily unavailable. Please try again; the app will automatically retry its model ladder.',code:'capacity'},503,cors);return j({error:String(e?.message||e),code:'server'},500,cors)}
   }
 };
 
@@ -158,8 +158,31 @@ async function runVisionResilient(env,image,userText,isScreen,documentRead=false
   }catch(e){if(isCapacityError(e)){await sleep(180);const result=await env.AI.run('@cf/meta/llama-3.2-11b-vision-instruct',{messages:[{role:'system',content:visionPrompt},{role:'user',content:`User request: ${userText}`}],image,max_tokens:documentRead?850:160,temperature:documentRead?0:0.1});return {text:extract(result),model:'@cf/meta/llama-3.2-11b-vision-instruct retry'}}throw e}
 }
 
-async function runFastReasoning(env,messages){try{const result=await env.AI.run('@cf/google/gemma-4-26b-a4b-it',{messages,max_completion_tokens:300,temperature:0.35});return {result,model:'@cf/google/gemma-4-26b-a4b-it fast'}}catch(e){if(!isCapacityError(e))throw e;return runReasoningResilient(env,{messages,max_tokens:320,temperature:0.35})}}
-async function runReasoningResilient(env,payload){try{const result=await env.AI.run('@cf/openai/gpt-oss-120b',payload);return {result,model:'@cf/openai/gpt-oss-120b'}}catch(e){if(!isCapacityError(e))throw e}await sleep(160);try{const result=await env.AI.run('@cf/openai/gpt-oss-120b',payload);return {result,model:'@cf/openai/gpt-oss-120b retry'}}catch(e){if(!isCapacityError(e))throw e}const result=await env.AI.run('@cf/google/gemma-4-26b-a4b-it',{messages:payload.messages,max_completion_tokens:Math.min(Number(payload.max_tokens||360),700),temperature:payload.temperature??0.35});return {result,model:'@cf/google/gemma-4-26b-a4b-it capacity fallback'}}
+function hasUsableAnswer(result){return cleanModelText(extract(result)).length>1}
+async function runFastReasoning(env,messages){
+  try{const result=await env.AI.run('@cf/google/gemma-4-26b-a4b-it',{messages,max_completion_tokens:360,temperature:0.3});if(hasUsableAnswer(result))return {result,model:'@cf/google/gemma-4-26b-a4b-it fast'}}catch(_){}
+  return runReasoningResilient(env,{messages,max_tokens:420,temperature:0.3},true);
+}
+async function runReasoningResilient(env,payload,skipGemma=false){
+  const limit=Math.min(Math.max(Number(payload.max_tokens||420),240),1200),temperature=payload.temperature??0.3;
+  const candidates=[
+    {id:'@cf/openai/gpt-oss-120b',body:{...payload,max_tokens:limit}},
+    ...(!skipGemma?[{id:'@cf/google/gemma-4-26b-a4b-it',body:{messages:payload.messages,max_completion_tokens:limit,temperature}}]:[]),
+    {id:'@cf/meta/llama-4-scout-17b-16e-instruct',body:{messages:payload.messages,max_tokens:limit,temperature}},
+    {id:'@cf/zai-org/glm-4.7-flash',body:{messages:payload.messages,max_completion_tokens:limit,temperature}}
+  ];
+  let lastError=null;
+  for(let i=0;i<candidates.length;i++){
+    const candidate=candidates[i];
+    try{
+      const result=await env.AI.run(candidate.id,candidate.body);
+      if(hasUsableAnswer(result))return {result,model:i?candidate.id+' answer fallback':candidate.id};
+      lastError=new Error(candidate.id+' returned an empty answer');
+    }catch(e){lastError=e}
+    if(i<candidates.length-1)await sleep(90);
+  }
+  throw new Error(`All EARA reasoning models were unavailable: ${String(lastError?.message||lastError||'unknown error').slice(0,180)}`);
+}
 
 function isMemoryRecallIntent(s){return /\b(previous|earlier|past|old|before|last time|our notes|my notes|saved notes|previous notes|memory|memories|history|we discussed|we talked|what did we|what have we|go through (?:our )?notes|look through (?:our )?notes|search (?:our )?notes|from (?:our )?notes|saved interactions|recall|remember when)\b/i.test(String(s||''))}
 function isFastPrompt(text,personality,hasScene){const t=String(text||'').trim();if(personality==='expert'||personality==='fieldtech')return false;if(t.length>180)return false;if(/\b(analy[sz]e|deep|detailed|compare|comparison|troubleshoot|diagnose|proposal|estimate|calculate|design|architecture|code|program|research|investigate|legal|contract|tax|strategy|step by step|explain why|previous|notes|memory|document|paper|letter|form|read)\b/i.test(t))return false;if(hasScene&&/\b(explain|why|how|repair|fix|troubleshoot)\b/i.test(t))return false;return true}
