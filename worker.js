@@ -5,7 +5,8 @@ export default {
     const cors = {"Access-Control-Allow-Origin": origin === allowedOrigin ? origin : allowedOrigin,"Access-Control-Allow-Methods":"POST, OPTIONS","Access-Control-Allow-Headers":"Content-Type","Vary":"Origin"};
     if (request.method === "OPTIONS") return new Response(null,{headers:cors});
     const url = new URL(request.url);
-    if (!env.GEMINI_API_KEY) return j({error:"GEMINI_API_KEY is not configured"},500,cors);
+    const key = env.GEMINI_API_KEY || env.Gemini_API_Key || env.Gemini_API_KEY || env.gemini_api_key;
+    if (!key) return j({error:"Gemini API key is not configured. Expected GEMINI_API_KEY or Gemini_API_Key."},500,cors);
     try {
       if (url.pathname === "/transcribe" && request.method === "POST") {
         const incoming = await request.formData();
@@ -15,7 +16,7 @@ export default {
         let binary = "";
         for (let i=0;i<bytes.length;i+=0x8000) binary += String.fromCharCode(...bytes.subarray(i,i+0x8000));
         const base64 = btoa(binary);
-        const data = await gemini(env.GEMINI_API_KEY,[
+        const data = await gemini(key,[
           {text:"Transcribe this speech accurately. Return only the words spoken, with no commentary."},
           {inlineData:{mimeType:audio.type || "audio/mp4",data:base64}}
         ]);
@@ -29,10 +30,10 @@ export default {
           const m=image.match(/^data:(image\/[^;]+);base64,(.+)$/);
           if(m) parts.push({inlineData:{mimeType:m[1],data:m[2]}});
         }
-        const data=await gemini(env.GEMINI_API_KEY,parts);
+        const data=await gemini(key,parts);
         return j({text:extract(data)||"I couldn't generate a response."},200,cors);
       }
-      return j({ok:true,service:"EARA Gemini backend"},200,cors);
+      return j({ok:true,service:"EARA Gemini backend",secretNameDetected:key===env.GEMINI_API_KEY?"GEMINI_API_KEY":key===env.Gemini_API_Key?"Gemini_API_Key":"alternate"},200,cors);
     } catch(e) { return j({error:String(e?.message||e)},500,cors); }
   }
 };
