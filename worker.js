@@ -41,7 +41,7 @@ async function callModel(key,model,parts){
   const err=new Error(msg); err.retryable=retryable; throw err;
 }
 async function gemini(key,parts){
-  const models=["gemini-3.7-flash","gemini-2.5-flash"];
+  const models=["gemini-3.6-flash","gemini-3.7-flash"];
   let last;
   for(const model of models){
     for(let attempt=0;attempt<3;attempt++){
