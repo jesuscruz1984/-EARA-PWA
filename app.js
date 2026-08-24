@@ -1,0 +1,48 @@
+const $=s=>document.querySelector(s);
+const DEFAULT_BACKEND='https://eara-pwa.jesuscruz1984.workers.dev';
+const MEMKEY='earaMemoryV2';
+const PERSONAKEY='earaPersona';
+let stream=null,lastReply='',cameraEnabled=true,micEnabled=true;
+const personalities={
+  helpful:'Helpful Assistant',
+  concise:'Fast & Concise',
+  expert:'Expert Analyst',
+  companion:'Friendly Companion',
+  fieldtech:'Field Technician',
+  observer:'Curious Observer'
+};
+function backend(){return DEFAULT_BACKEND}
+function badge(x){$('#badge').textContent='● '+x}
+function memory(){try{return JSON.parse(localStorage.getItem(MEMKEY)||'[]')}catch(_){return []}}
+function saveMemory(arr){localStorage.setItem(MEMKEY,JSON.stringify(arr.slice(-500)));renderMemory()}
+function addMemory(entry){const arr=memory();arr.push({...entry,ts:new Date().toISOString()});saveMemory(arr)}
+function words(s){return new Set(String(s||'').toLowerCase().match(/[a-z0-9]{3,}/g)||[])}
+function memoryContext(query){const q=words(query),arr=memory();const scored=arr.map((m,i)=>{let score=i/Math.max(1,arr.length)*2;const hay=words((m.user||'')+' '+(m.assistant||''));q.forEach(w=>{if(hay.has(w))score+=4});return {m,score}}).sort((a,b)=>b.score-a.score).slice(0,16).map(x=>x.m).reverse();return scored.map(m=>`[${new Date(m.ts).toLocaleString()}] User: ${m.user}\nEARA: ${m.assistant}${m.vision?'\n[Vision frame processed]':''}`).join('\n\n')}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function linkify(s){return esc(s).replace(/(https?:\/\/[^\s<]+)/g,'<a href="$1" target="_blank" rel="noopener">$1</a>').replace(/\n/g,'<br>')}
+function setReply(text){lastReply=String(text||'');$('#reply').innerHTML=linkify(lastReply);$('#copyReply').disabled=!lastReply;$('#speak').disabled=!lastReply}
+function renderMemory(){const arr=memory();$('#memoryCount').textContent=`${arr.length} saved interactions`;const box=$('#memoryList');if(!arr.length){box.innerHTML='<div class="small">No memories yet. EARA will retain every question and AI response on this device.</div>';return}box.innerHTML=arr.slice().reverse().map(m=>`<article class="mem"><div class="small">${new Date(m.ts).toLocaleString()} · ${esc(personalities[m.persona]||m.persona||'EARA')}${m.vision?' · Vision':''}</div><b>You:</b> <span>${linkify(m.user)}</span><br><b>EARA:</b> <span>${linkify(m.assistant)}</span></article>`).join('')}
+async function chooseWideCamera(){try{const devices=await navigator.mediaDevices.enumerateDevices();const cams=devices.filter(d=>d.kind==='videoinput');const wide=cams.find(d=>/ultra\s*wide|0\.5|wide angle|back.*wide/i.test(d.label));if(!wide)return false;const vt=stream?.getVideoTracks?.()[0];if(vt)vt.stop();const vs=await navigator.mediaDevices.getUserMedia({video:{deviceId:{exact:wide.deviceId},width:{ideal:1920},height:{ideal:1080}},audio:false});const newTrack=vs.getVideoTracks()[0];stream.addTrack(newTrack);video.srcObject=stream;await video.play();return true}catch(_){return false}}
+async function applyMinZoom(){try{const t=stream?.getVideoTracks?.()[0],cap=t?.getCapabilities?.();if(cap?.zoom){await t.applyConstraints({advanced:[{zoom:cap.zoom.min}]})}}catch(_){}}
+async function startMedia(silent=false){if(stream)return true;try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}},audio:true});video.srcObject=stream;await video.play();await chooseWideCamera();await applyMinZoom();cameraEnabled=true;micEnabled=true;$('#cam').textContent='WIDE VISION';$('#cameraBtn').textContent='Disable Camera';$('#micBtn').textContent='Disable Mic';$('#permissionBtn').classList.add('hidden');$('#mediaControls').classList.remove('hidden');badge('Live');$('#state').textContent='Starting hands-free…';window.dispatchEvent(new CustomEvent('eara-media-ready'));return true}catch(e){if(!silent){$('#permissionBtn').classList.remove('hidden');$('#state').textContent='Tap Enable Camera + Mic once to grant permission.'}return false}}
+function stopCamera(){if(!stream)return;const tracks=stream.getVideoTracks();cameraEnabled=!cameraEnabled;tracks.forEach(t=>t.enabled=cameraEnabled);$('#cameraBtn').textContent=cameraEnabled?'Disable Camera':'Enable Camera';$('#cam').textContent=cameraEnabled?'WIDE VISION':'CAMERA PAUSED'}
+function stopMic(){if(!stream)return;micEnabled=!micEnabled;stream.getAudioTracks().forEach(t=>t.enabled=micEnabled);$('#micBtn').textContent=micEnabled?'Disable Mic':'Enable Mic';if(micEnabled)window.dispatchEvent(new CustomEvent('eara-mic-enabled'));else window.dispatchEvent(new CustomEvent('eara-mic-disabled'));$('#state').textContent=micEnabled?'Listening — say “Hey Robot”':'Microphone disabled'}
+function snap(){if(!stream||!cameraEnabled)return null;const c=$('#canvas');c.width=video.videoWidth||960;c.height=video.videoHeight||540;c.getContext('2d').drawImage(video,0,0,c.width,c.height);return c.toDataURL('image/jpeg',.62)}
+function fail(e){setReply('Connection error: '+(e.message||e));$('#state').textContent='Error';badge('Error');$('#ai').textContent='Error'}
+async function askAI(text){const q=String(text||'').trim();if(!q)return;try{$('#state').textContent='Thinking…';badge('Thinking');const image=snap();const persona=localStorage.getItem(PERSONAKEY)||'helpful';const mem=memoryContext(q);const r=await fetch(backend()+'/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:q,image,memory:mem,personality:persona})});const raw=await r.text();if(!r.ok)throw new Error('HTTP '+r.status+': '+raw);const j=JSON.parse(raw),answer=j.text||'No reply';setReply(answer);addMemory({user:q,assistant:answer,vision:!!image,persona});$('#transcript').textContent='You: '+q;$('#ai').textContent='AI ready';badge('Live');say(answer);return answer}catch(e){fail(e);throw e}}
+function say(t){speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);speechSynthesis.speak(u)}
+async function copyText(t){try{await navigator.clipboard.writeText(t);badge('Copied');setTimeout(()=>badge('Live'),900)}catch(_){}}
+function setPersona(v){localStorage.setItem(PERSONAKEY,v);$('#persona').value=v;$('#personaLive').textContent=personalities[v]||v}
+$('#permissionBtn').onclick=()=>startMedia(false);
+$('#cameraBtn').onclick=stopCamera;$('#micBtn').onclick=stopMic;
+$('#ask').onclick=()=>{const t=$('#typed').value.trim();if(t){$('#typed').value='';askAI(t)}};
+$('#typed').addEventListener('keydown',e=>{if(e.key==='Enter')$('#ask').click()});
+$('#speak').onclick=()=>say(lastReply);$('#copyReply').onclick=()=>copyText(lastReply);
+$('#copyMemory').onclick=()=>copyText(memory().map(m=>`[${new Date(m.ts).toLocaleString()}]\nYou: ${m.user}\nEARA: ${m.assistant}${m.vision?'\nVision frame processed':''}`).join('\n\n'));
+$('#clearMemory').onclick=()=>{if(confirm('Clear all EARA memory saved on this device?'))saveMemory([])};
+$('#persona').onchange=e=>setPersona(e.target.value);
+const initialPersona=localStorage.getItem(PERSONAKEY)||'helpful';setPersona(initialPersona);renderMemory();
+document.querySelectorAll('nav button').forEach(b=>b.onclick=()=>{document.querySelectorAll('nav button').forEach(x=>x.classList.remove('active'));b.classList.add('active');['live','memory','tasks','settings'].forEach(id=>$('#'+id).classList.toggle('hidden',id!==b.dataset.tab));if(b.dataset.tab==='memory')renderMemory()});
+if('serviceWorker'in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+window.askAI=askAI;window.startMedia=startMedia;window.getEaraStream=()=>stream;window.isEaraMicEnabled=()=>micEnabled;
+setTimeout(()=>startMedia(true).then(ok=>{if(!ok){$('#permissionBtn').classList.remove('hidden');$('#state').textContent='Tap Enable Camera + Mic once.'}}),350);
