@@ -4,7 +4,7 @@
   const WAKE=/^\s*(?:(?:hey|ok|okay)\s+)?(?:eara|era|aira|eira|eera|ear\s+a)\b[\s,.:;!?-]*(.*)$/i;
   const ACTIVE_MS=10000;
   const COMMAND_SILENCE_MS=650;
-  const PREMIUM_TTS_TIMEOUT_MS=4200;
+  const PREMIUM_TTS_TIMEOUT_MS=1800;
 
   let recognition=null,handsFree=false,speaking=false,processing=false,starting=false;
   let restartTimer=null,activeTimer=null,commandTimer=null,activeUntil=0,active=false,commandBuffer='';
@@ -23,10 +23,11 @@
     const raw=String(text||'').trim();if(!raw)return '';
     const hadLink=/(?:https?:\/\/|www\.)/i.test(raw);
     let s=raw.replace(/\[([^\]]+)\]\((?:https?:\/\/|www\.)[^)]+\)/gi,'$1').replace(/(?:https?:\/\/|www\.)\S+/gi,'').replace(/\b(?:direct\s+)?(?:amazon|product|purchase|buy|website)?\s*(?:link|url)\s*[:\-]?\s*/gi,'').replace(/[\*_`#>|]+/g,' ').replace(/\s+/g,' ').trim();
-    if(!s&&hadLink)return 'I found the link and put it on screen.';
-    let short=(s.match(/[^.!?]+[.!?]+|[^.!?]+$/)||[s])[0].trim();
-    if(short.length>150){short=short.slice(0,150);const cut=short.lastIndexOf(' ');if(cut>105)short=short.slice(0,cut);short=short.replace(/[,:;\-\s]+$/,'')+'.'}
-    if(hadLink&&!/\b(?:link|on screen|screen)\b/i.test(short))short+=(/[.!?]$/.test(short)?'':' .')+' The link is on screen.';
+    if(!s&&hadLink)return 'I found the link and put it in the text notes on screen.';
+    const sentences=s.match(/[^.!?]+[.!?]+|[^.!?]+$/g)||[s];
+    let short=sentences.slice(0,2).join(' ').trim();
+    if(short.length>270){short=short.slice(0,270);const cut=short.lastIndexOf(' ');if(cut>210)short=short.slice(0,cut);short=short.replace(/[,:;\-\s]+$/,'')+'.'}
+    if(hadLink&&!/\b(?:link|links|text notes|on screen|screen)\b/i.test(short))short+=(/[.!?]$/.test(short)?'':' .')+' The links are in the text notes on screen.';
     return short.replace(/\s+\./g,'.').trim();
   }
 
@@ -48,20 +49,20 @@
 
   function localSpeak(text,onDone){
     if(!speakerEnabled)return false;const msg=spokenVersion(text);if(!msg)return false;
-    try{speechSynthesis.cancel();speechSynthesis.resume();const u=new SpeechSynthesisUtterance(msg);u.lang='en-US';u.volume=1;u.rate=1.03;const voices=speechSynthesis.getVoices();const v=voices.find(x=>/^en-US$/i.test(x.lang)&&/Samantha|Ava|Aaron|Alex|Siri/i.test(x.name))||voices.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;let finished=false;const finish=()=>{if(finished)return;finished=true;clearTimeout(safety);if(typeof onDone==='function')onDone()};const safety=setTimeout(finish,Math.max(5000,msg.length*90));u.onend=finish;u.onerror=finish;speechSynthesis.speak(u);return true}catch(_){return false}
+    try{speechSynthesis.cancel();speechSynthesis.resume();const u=new SpeechSynthesisUtterance(msg);u.lang='en-US';u.volume=1;u.rate=1.03;const voices=speechSynthesis.getVoices();const v=voices.find(x=>/^en-US$/i.test(x.lang)&&/Samantha|Ava|Aaron|Alex|Siri/i.test(x.name))||voices.find(x=>/^en/i.test(x.lang));if(v)u.voice=v;let finished=false;const finish=()=>{if(finished)return;finished=true;clearTimeout(safety);if(typeof onDone==='function')onDone()};const safety=setTimeout(finish,Math.max(6000,msg.length*85));u.onend=finish;u.onerror=finish;speechSynthesis.speak(u);return true}catch(_){return false}
   }
   async function primeAudio(){if(!speakerEnabled)return false;const p=ensurePlayer();try{p.src='data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';p.volume=0.01;await p.play();p.pause();p.currentTime=0;p.volume=1;audioPrimed=true;return true}catch(_){return false}}
   function revokeObjectUrl(){if(currentObjectUrl){try{URL.revokeObjectURL(currentObjectUrl)}catch(_){}currentObjectUrl=''}}
   function audioBlobFromBase64(b64,mime){const bin=atob(String(b64||'')),bytes=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);return new Blob([bytes],{type:mime||'audio/mpeg'})}
   async function playBlob(blob,onDone,msg){
     const p=ensurePlayer();try{p.pause()}catch(_){}revokeObjectUrl();currentObjectUrl=URL.createObjectURL(blob);p.src=currentObjectUrl;p.volume=1;let finished=false;
-    const finish=()=>{if(finished)return;finished=true;revokeObjectUrl();onDone()};p.onended=finish;p.onerror=()=>{revokeObjectUrl();if(!localSpeak(msg,finish))finish()};
-    try{p.load();await p.play();audioPrimed=true;setBadge('Speaking');return true}catch(_){revokeObjectUrl();if(localSpeak(msg,finish))return true;finish();return false}
+    const finish=()=>{if(finished)return;finished=true;revokeObjectUrl();onDone()};p.onended=finish;p.onerror=()=>{revokeObjectUrl();setState('EARA speaking…');setBadge('Speaking');if(!localSpeak(msg,finish))finish()};
+    try{p.load();await p.play();audioPrimed=true;setState('EARA speaking…');setBadge('Speaking');return true}catch(_){revokeObjectUrl();setState('EARA speaking…');setBadge('Speaking');if(localSpeak(msg,finish))return true;finish();return false}
   }
 
   async function cloudSpeak(text){
     const full=String(text||'').trim(),msg=spokenVersion(full);if(!msg||!speakerEnabled){if(active)armActive();if(handsFree&&micAvailable())scheduleRestart(70);return}
-    speaking=true;clearTimeout(restartTimer);try{recognition?.abort()}catch(_){}setState('EARA speaking…');setBadge('Speaking');
+    speaking=true;clearTimeout(restartTimer);try{recognition?.abort()}catch(_){}setState('Preparing voice…');setBadge('Loading voice…');
     let doneCalled=false;const done=()=>{if(doneCalled)return;doneCalled=true;speaking=false;if(active)armActive();if(handsFree&&micAvailable()){setState(idleState());setBadge(idleBadge());scheduleRestart(80)}};
     const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),PREMIUM_TTS_TIMEOUT_MS);
     try{
@@ -69,7 +70,10 @@
       clearTimeout(timeout);if(!r.ok)throw new Error(await r.text());const type=(r.headers.get('content-type')||'').toLowerCase();let blob;
       if(type.includes('audio/'))blob=await r.blob();else{const j=await r.json();if(!j.audio)throw new Error('No audio returned');blob=audioBlobFromBase64(j.audio,j.mime||'audio/mpeg')}
       const played=await playBlob(blob,done,msg);if(!played)done();
-    }catch(_){clearTimeout(timeout);if(!localSpeak(msg,done)){speaking=false;setState(audioPrimed?'Voice playback failed — tap Speak Again':'Tap anywhere once to unlock iPhone audio.');setBadge(audioPrimed?'Voice Error':'Audio Tap Needed');if(handsFree&&micAvailable())scheduleRestart(100)}}
+    }catch(_){
+      clearTimeout(timeout);setState('EARA speaking…');setBadge('Speaking');
+      if(!localSpeak(msg,done)){speaking=false;setState(audioPrimed?'Voice playback failed — tap Speak Again':'Tap anywhere once to unlock iPhone audio.');setBadge(audioPrimed?'Voice Error':'Audio Tap Needed');if(handsFree&&micAvailable())scheduleRestart(100)}
+    }
   }
 
   window.say=cloudSpeak;window.unlockEaraVoice=primeAudio;window.isEaraSpeakerEnabled=()=>speakerEnabled;window.getEaraSpokenVersion=spokenVersion;window.isEaraActive=()=>active;
