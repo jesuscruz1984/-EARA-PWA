@@ -1,6 +1,16 @@
 // EARA fast hands-free wake phrase: Eara
 (()=>{
-  const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  const nativeSpeech=window.EARANative&&typeof window.EARANative.startListening==='function'?window.EARANative:null;
+  function NativeSpeechRecognition(){
+    this.continuous=false;this.interimResults=true;this.lang='en-US';this.maxAlternatives=3;this._started=false;
+    const emitResult=(text,isFinal)=>{const alt={transcript:String(text||'')},result=[alt];result.isFinal=!!isFinal;const results=[result];this.onresult?.({resultIndex:0,results})};
+    this._listener=e=>{const d=e.detail||{};if(!this._started)return;if(d.type==='result')emitResult(d.text,d.final);else if(d.type==='error')this.onerror?.({error:d.error||'no-speech'});else if(d.type==='end'){this._started=false;this.onend?.()}};
+    window.addEventListener('eara-native-speech',this._listener);
+    this.start=()=>{if(this._started)return;this._started=true;this.onstart?.();try{nativeSpeech.startListening()}catch(_){this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.()}};
+    this.abort=()=>{if(!this._started)return;try{nativeSpeech.stopListening()}catch(_){}this._started=false};
+    this.stop=this.abort;
+  }
+  const SR=nativeSpeech?NativeSpeechRecognition:(window.SpeechRecognition||window.webkitSpeechRecognition);
   const WAKE=/^\s*(?:(?:hey|ok|okay)\s+)?(?:eara|era|aira|eira|eera|ear\s+a)\b[\s,.:;!?-]*(.*)$/i;
   const ACTIVE_MS=10000;
   const COMMAND_SILENCE_MS=650;
