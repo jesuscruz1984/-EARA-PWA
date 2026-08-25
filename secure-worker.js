@@ -1,6 +1,7 @@
 import app from './worker.js';
 
 const DEFAULT_ORIGIN='https://jesuscruz1984.github.io';
+const DEFAULT_GATEWAY='default';
 const BILLABLE=new Set(['/chat','/tts','/transcribe','/web-test']);
 const BODY_LIMITS={
   '/chat':9_000_000,
@@ -60,12 +61,37 @@ async function applyRateLimit(request,env){
   return !!success;
 }
 
+function gatewayAI(env){
+  const binding=env.AI;
+  if(!binding||typeof binding.run!=='function')return binding;
+  const gatewayId=String(env.AI_GATEWAY_ID||DEFAULT_GATEWAY).trim()||DEFAULT_GATEWAY;
+  return {
+    run(model,input,options={}){
+      const base=options&&typeof options==='object'?options:{};
+      const gateway={...(base.gateway||{}),id:gatewayId};
+      return binding.run(model,input,{...base,gateway});
+    }
+  };
+}
+
+function withGateway(env){
+  const routedAI=gatewayAI(env);
+  if(routedAI===env.AI)return env;
+  return new Proxy(env,{
+    get(target,prop,receiver){
+      if(prop==='AI')return routedAI;
+      return Reflect.get(target,prop,receiver);
+    }
+  });
+}
+
 export default {
   async fetch(request,env,ctx){
     const url=new URL(request.url);
     const allowedOrigin=env.ALLOWED_ORIGIN||DEFAULT_ORIGIN;
     const origin=request.headers.get('Origin')||'';
     const headers=corsHeaders(origin,allowedOrigin);
+    const gatewayId=String(env.AI_GATEWAY_ID||DEFAULT_GATEWAY).trim()||DEFAULT_GATEWAY;
 
     if(request.method==='OPTIONS'){
       if(origin&&origin!==allowedOrigin)return json({error:'Origin not allowed.'},403,headers);
@@ -75,7 +101,7 @@ export default {
     if(origin&&origin!==allowedOrigin)return json({error:'Origin not allowed.'},403,headers);
 
     if(url.pathname==='/health'&&request.method==='GET'){
-      return json({ok:true,service:'EARA',securityConfigured:!!env.EARA_ACCESS_TOKEN,rateLimitConfigured:!!env.EARA_RATE_LIMITER},200,headers);
+      return json({ok:true,service:'EARA',securityConfigured:!!env.EARA_ACCESS_TOKEN,rateLimitConfigured:!!env.EARA_RATE_LIMITER,aiGatewayConfigured:!!env.AI,gatewayId},200,headers);
     }
 
     if(url.pathname==='/auth-check'&&request.method==='GET'){
@@ -100,7 +126,7 @@ export default {
     }
 
     try{
-      const response=await app.fetch(request,env,ctx);
+      const response=await app.fetch(request,withGateway(env),ctx);
       return harden(response,headers);
     }catch(_){
       return json({error:'EARA request failed.'},500,headers);
