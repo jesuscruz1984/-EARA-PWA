@@ -1,0 +1,15 @@
+# Never commit secrets or local credentials
+.env
+.env.*
+!.env.example
+.dev.vars
+.dev.vars.*
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Local/build files
+node_modules/
+.wrangler/
+.DS_Store
