@@ -1,11 +1,21 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "eara-pwa",
-  "main": "worker.js",
+  "main": "secure-worker.js",
   "compatibility_date": "2026-08-20",
   "workers_dev": true,
   "ai": {
     "binding": "AI"
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "EARA_RATE_LIMITER",
+      "namespace_id": "73421",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ]
 }
-// deployment trigger after adding Cloudflare GitHub secrets
+// Sensitive values such as TAVILY_API_KEY and EARA_ACCESS_TOKEN must be Cloudflare Secrets, never source-code vars.
