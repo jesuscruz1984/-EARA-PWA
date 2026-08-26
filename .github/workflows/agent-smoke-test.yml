@@ -8,6 +8,7 @@ on:
       - "worker.js"
       - "secure-worker.js"
       - "agent-wrapper.js"
+      - "agent-wrapper-v2.js"
       - "wrangler.jsonc"
       - ".github/workflows/agent-smoke-test.yml"
   workflow_dispatch:
@@ -49,18 +50,34 @@ jobs:
             | tee /tmp/chat.json
           jq -e '((.text // "") | length) > 0' /tmp/chat.json >/dev/null
 
-      - name: Test real PDF creation
+      - name: Test exact CSS Tech company lookup
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 2 --retry-delay 3 \
             -H 'Origin: https://jesuscruz1984.github.io' \
             -H 'Content-Type: application/json' \
-            --data '{"text":"Make me a professional proposal for Allied Universal using Uniview equipment for 42 cameras and NVRs and make it a PDF.","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
+            --data '{"text":"My company name is CSSTECH look me up online get my logo n company info to make proposal nice","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
+            | tee /tmp/css.json
+          jq -e '.grounded == true and .webUsed == true' /tmp/css.json >/dev/null
+          jq -r '.text' /tmp/css.json | grep -qi 'csstech.net'
+          jq -r '.text' /tmp/css.json | grep -qi 'Miami'
+          ! jq -r '.text' /tmp/css.json | grep -qi 'Austin'
+
+      - name: Test branded Allied Universal PDF creation
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 2 --retry-delay 3 \
+            -H 'Origin: https://jesuscruz1984.github.io' \
+            -H 'Content-Type: application/json' \
+            --data '{"text":"Make me a professional proposal for Allied Universal using Uniview equipment for 42 cameras and NVRs and make it a PDF.","memory":"User: My company is CSSTECH. Agent 1.0: Verified company profile CSS Tech LLC, 16235 SW 117 Ave Unit #14, Miami, FL 33177, 305-246-2325, sales@csstech.net, https://www.csstech.net.","memoryCount":2,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
             https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
             | tee /tmp/pdf.json
           jq -e '.pdfCreated == true and (.files | length) > 0 and ((.files[0].data // "") | length) > 100' /tmp/pdf.json >/dev/null
           jq -r '.files[0].data' /tmp/pdf.json | base64 -d > /tmp/test.pdf
           head -c 5 /tmp/test.pdf | grep -q '%PDF-'
+          strings /tmp/test.pdf | grep -q 'CSS TECH'
+          strings /tmp/test.pdf | grep -q 'Allied Universal'
 
       - name: Passed
-        run: echo 'Agent 1.0 live page, chat, and PDF creation all passed.'
+        run: echo 'Agent 1.0 live page, grounded CSS Tech lookup, chat, and branded PDF creation all passed.'
