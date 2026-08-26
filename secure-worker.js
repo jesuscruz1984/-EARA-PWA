@@ -10,6 +10,9 @@ const BODY_LIMITS={
   '/web-test':4_000
 };
 
+const TERRA='openai/gpt-5.6-terra';
+const SOL='openai/gpt-5.6-sol';
+
 function corsHeaders(origin,allowedOrigin){
   const h={
     'Access-Control-Allow-Methods':'GET, POST, OPTIONS',
@@ -61,6 +64,37 @@ async function applyRateLimit(request,env){
   return !!success;
 }
 
+function hasImageInput(input){
+  try{return JSON.stringify(input||{}).includes('image_url')}catch(_){return false}
+}
+
+function openAIRequest(input,effort='low'){
+  const src=input&&typeof input==='object'?input:{};
+  const max=Math.min(Math.max(Number(src.max_completion_tokens||src.max_tokens||src.max_output_tokens||420),64),1600);
+  const out={};
+  if(Array.isArray(src.messages))out.messages=src.messages;
+  else if(src.input!==undefined)out.input=src.input;
+  else if(src.prompt!==undefined)out.messages=[{role:'user',content:String(src.prompt)}];
+  else Object.assign(out,src);
+  if(out.messages)out.max_completion_tokens=max;
+  else out.max_output_tokens=max;
+  if(src.tools)out.tools=src.tools;
+  if(src.tool_choice)out.tool_choice=src.tool_choice;
+  if(out.messages)out.reasoning_effort=effort;
+  else out.reasoning={effort};
+  return out;
+}
+
+function routeModel(model,input){
+  // EARA hybrid brain:
+  // Terra handles fast conversation, camera/vision and web fallback.
+  // Sol handles the existing complex/deep reasoning path.
+  if(model==='@cf/openai/gpt-oss-120b')return {model:SOL,input:openAIRequest(input,'medium')};
+  if(model==='@cf/google/gemma-4-26b-a4b-it')return {model:TERRA,input:openAIRequest(input,hasImageInput(input)?'low':'low')};
+  if(model==='openai/gpt-5.5')return {model:TERRA,input:openAIRequest(input,'low')};
+  return {model,input};
+}
+
 function gatewayAI(env){
   const binding=env.AI;
   if(!binding||typeof binding.run!=='function')return binding;
@@ -69,7 +103,8 @@ function gatewayAI(env){
     run(model,input,options={}){
       const base=options&&typeof options==='object'?options:{};
       const gateway={...(base.gateway||{}),id:gatewayId};
-      return binding.run(model,input,{...base,gateway});
+      const routed=routeModel(model,input);
+      return binding.run(routed.model,routed.input,{...base,gateway});
     }
   };
 }
@@ -101,7 +136,18 @@ export default {
     if(origin&&origin!==allowedOrigin)return json({error:'Origin not allowed.'},403,headers);
 
     if(url.pathname==='/health'&&request.method==='GET'){
-      return json({ok:true,service:'EARA',securityConfigured:!!env.EARA_ACCESS_TOKEN,rateLimitConfigured:!!env.EARA_RATE_LIMITER,aiGatewayConfigured:!!env.AI,gatewayId},200,headers);
+      return json({
+        ok:true,
+        service:'EARA Hybrid Brain v26',
+        securityConfigured:!!env.EARA_ACCESS_TOKEN,
+        rateLimitConfigured:!!env.EARA_RATE_LIMITER,
+        aiGatewayConfigured:!!env.AI,
+        gatewayId,
+        hybrid:true,
+        normalModel:'gpt-5.6-terra',
+        complexModel:'gpt-5.6-sol',
+        routing:'Terra for fast conversation/vision/web; Sol for deep reasoning, expert and memory-heavy tasks'
+      },200,headers);
     }
 
     if(url.pathname==='/auth-check'&&request.method==='GET'){
