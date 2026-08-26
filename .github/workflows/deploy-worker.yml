@@ -7,6 +7,9 @@ on:
       - "worker.js"
       - "secure-worker.js"
       - "agent-wrapper.js"
+      - "agent-wrapper-v2.js"
+      - "agent-wrapper-v3.js"
+      - "agent-wrapper-v4.js"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-worker.yml"
   workflow_dispatch:
