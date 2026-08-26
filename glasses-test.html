@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#030914">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://eara-pwa.jesuscruz1984.workers.dev; img-src 'self' data: blob:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <title>EARA Glasses Lab</title>
+  <style>
+    :root{--bg:#030914;--p:#0b1727ee;--p2:#10263dee;--t:#f6fbff;--m:#8ea9bf;--a:#4cc9ff;--g:#42f5bd;--r:#ff6b7a;--y:#ffd166}
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:var(--bg);color:var(--t);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text",sans-serif}
+    body{padding:calc(env(safe-area-inset-top) + 10px) 14px calc(env(safe-area-inset-bottom) + 16px);background:linear-gradient(180deg,#06111f,#020711 70%,#00040a)}
+    .app{max-width:760px;margin:auto}
+    header{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:8px 2px 16px}
+    h1{font-size:24px;letter-spacing:1.4px;margin:0}
+    .sub,.small{color:var(--m);font-size:12px;line-height:1.45}
+    .pill{border:1px solid #27506b;border-radius:999px;padding:8px 10px;background:#061321dd;font-size:11px;white-space:nowrap}
+    .card{background:linear-gradient(180deg,var(--p2),var(--p));border:1px solid #244a64;border-radius:20px;padding:14px;margin-bottom:14px;box-shadow:0 12px 36px #0008}
+    .title{font-weight:800;letter-spacing:.5px;margin-bottom:10px}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+    .row{display:flex;gap:9px;align-items:center}
+    button,select{width:100%;border:1px solid #254861;border-radius:14px;min-height:48px;padding:12px;font-weight:700;font-size:14px;background:#10243a;color:white}
+    button.primary{background:linear-gradient(135deg,#50cfff,#42a8ff);color:#03101b;border:0}
+    button.green{background:linear-gradient(135deg,#44f1bb,#20c99b);color:#03130e;border:0}
+    button.warn{border-color:#6c5831;color:#ffe4a3}
+    button:disabled{opacity:.45}
+    .status{margin-top:9px;padding:10px 11px;border-radius:13px;background:#04101ddd;border:1px solid #214967;color:#cbe8fa;font-size:13px;overflow-wrap:anywhere}
+    .status.bad{border-color:#67333a;color:#ffc0c8}
+    .status.good{border-color:#23614e;color:#baffea}
+    .kv{display:grid;grid-template-columns:125px 1fr;gap:7px 10px;font-size:13px;margin-top:6px}
+    .kv div:nth-child(odd){color:var(--m)}
+    .meter{height:12px;background:#061321;border:1px solid #28506b;border-radius:999px;overflow:hidden;margin-top:10px}
+    .meter>div{height:100%;width:0%;background:linear-gradient(90deg,#42f5bd,#4cc9ff);transition:width .08s linear}
+    pre{white-space:pre-wrap;word-break:break-word;background:#020a13;border:1px solid #1c3e55;border-radius:14px;padding:11px;min-height:150px;max-height:340px;overflow:auto;color:#c9eaff;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+    a{color:#55cfff}
+    .note{padding:11px;border-radius:14px;border:1px solid #6c5831;background:#1d1708cc;color:#ffe4a3;font-size:12px;line-height:1.5}
+    @media(max-width:600px){.grid{grid-template-columns:1fr}.kv{grid-template-columns:105px 1fr}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <div>
+        <h1>EARA GLASSES LAB</h1>
+        <div class="sub">Separate W610 / HeyCyan test page — main EARA is untouched</div>
+      </div>
+      <div class="pill" id="topStatus">Starting…</div>
+    </header>
+
+    <div class="card">
+      <div class="title">1 // PHONE + BROWSER</div>
+      <div class="kv">
+        <div>Platform</div><div id="platformValue">Checking…</div>
+        <div>Web Bluetooth</div><div id="bluetoothValue">Checking…</div>
+        <div>Secure page</div><div id="secureValue">Checking…</div>
+      </div>
+      <div class="status" id="browserStatus">Running capability checks…</div>
+    </div>
+
+    <div class="card">
+      <div class="title">2 // GLASSES AUDIO</div>
+      <div class="small">Pair W610 in iPhone Bluetooth first. This section checks whether EARA can hear through an available microphone and play speech through the phone's current Bluetooth audio route.</div>
+      <div style="height:10px"></div>
+      <select id="audioInput"><option value="">Audio input not scanned yet</option></select>
+      <div class="grid" style="margin-top:9px">
+        <button id="refreshAudio">Refresh Audio Devices</button>
+        <button id="testMic" class="green">Start Mic Test</button>
+        <button id="testSpeaker" class="primary">Speak Through Current Route</button>
+        <button id="stopMic" disabled>Stop Mic Test</button>
+      </div>
+      <div class="meter"><div id="micMeter"></div></div>
+      <div class="status" id="audioStatus">Waiting for audio test.</div>
+    </div>
+
+    <div class="card">
+      <div class="title">3 // W610 BLE DIAGNOSTIC</div>
+      <div class="small">Safe diagnostic only: scans/connects and lists accessible services/characteristics. It does not write unknown commands to the glasses.</div>
+      <div class="grid" style="margin-top:10px">
+        <button id="connectBle" class="primary">Connect W610</button>
+        <button id="disconnectBle" disabled>Disconnect</button>
+      </div>
+      <div class="status" id="bleStatus">Not connected.</div>
+      <div class="small" style="margin-top:10px">Known SDK services:</div>
+      <div class="small">7905fff0-b5ce-4e99-a40f-4b1e122d00d0</div>
+      <div class="small">6e40fff0-b5a3-f393-e0a9-e50e24dcca9e</div>
+    </div>
+
+    <div class="card">
+      <div class="title">4 // CAMERA PATH</div>
+      <div class="note">The HeyCyan camera is controlled by proprietary BLE commands and larger media is transferred over the glasses' Wi‑Fi connection. This lab first identifies what the browser can actually access before we send any camera command. On iPhone Safari/PWA, Web Bluetooth may be unavailable even though normal Bluetooth audio works.</div>
+    </div>
+
+    <div class="card">
+      <div class="title">DIAGNOSTIC LOG</div>
+      <pre id="log">EARA Glasses Lab ready.</pre>
+      <div class="grid">
+        <button id="copyLog">Copy Diagnostics</button>
+        <button id="clearLog">Clear Log</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <a href="index.html" style="width:100%;text-decoration:none"><button>← Open Main EARA</button></a>
+      </div>
+    </div>
+  </div>
+
+  <script src="glasses-test.js?v=1"></script>
+</body>
+</html>
