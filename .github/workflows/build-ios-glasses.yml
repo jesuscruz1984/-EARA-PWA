@@ -1,0 +1,70 @@
+name: Build EARA Glasses iOS
+
+on:
+  push:
+    branches:
+      - eara-glasses-native
+    paths:
+      - 'ios-glasses-app/**'
+      - '.github/workflows/build-ios-glasses.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout EARA
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Fetch HeyCyan QCSDK for test build
+        run: |
+          rm -rf /tmp/HeyCyanSmartGlassesSDK
+          git clone --depth 1 https://github.com/ebowwa/HeyCyanSmartGlassesSDK.git /tmp/HeyCyanSmartGlassesSDK
+          mkdir -p ios-glasses-app/Vendor
+          cp -R /tmp/HeyCyanSmartGlassesSDK/ios/QCSDK.framework ios-glasses-app/Vendor/QCSDK.framework
+
+      - name: Generate Xcode project
+        working-directory: ios-glasses-app
+        run: xcodegen generate
+
+      - name: Build unsigned iPhone app
+        working-directory: ios-glasses-app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project EARAGlasses.xcodeproj \
+            -scheme EARAGlasses \
+            -configuration Debug \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build | tee xcodebuild.log
+
+      - name: Package build artifact
+        working-directory: ios-glasses-app
+        run: |
+          APP_PATH=$(find build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
+          if [ -z "$APP_PATH" ]; then
+            echo "No .app produced"
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" EARAGlasses-unsigned.zip
+
+      - name: Upload unsigned app
+        uses: actions/upload-artifact@v4
+        with:
+          name: EARA-Glasses-unsigned
+          path: ios-glasses-app/EARAGlasses-unsigned.zip
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EARA-Glasses-build-log
+          path: ios-glasses-app/xcodebuild.log
+          if-no-files-found: ignore
