@@ -1,0 +1,34 @@
+name: EARAGlasses
+options:
+  bundleIdPrefix: com.csstech
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    TARGETED_DEVICE_FAMILY: "1"
+targets:
+  EARAGlasses:
+    type: application
+    platform: iOS
+    sources:
+      - path: EARAGlasses
+    dependencies:
+      - framework: Vendor/QCSDK.framework
+        embed: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.csstech.earaglasses
+        PRODUCT_NAME: EARA Glasses
+        INFOPLIST_FILE: EARAGlasses/Info.plist
+        CODE_SIGN_ENTITLEMENTS: EARAGlasses/EARAGlasses.entitlements
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/Vendor"
+        OTHER_LDFLAGS:
+          - "$(inherited)"
+          - "-ObjC"
+        CLANG_ENABLE_MODULES: YES
+        ENABLE_BITCODE: NO
+    scheme:
+      testTargets: []
