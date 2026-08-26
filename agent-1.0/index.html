@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f0f10">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://eara-pwa.jesuscruz1984.workers.dev; img-src 'self' data: blob:; media-src 'self' data: blob: https://eara-pwa.jesuscruz1984.workers.dev; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; worker-src 'self'; manifest-src 'self'">
+<link rel="manifest" href="manifest.webmanifest">
+<title>Agent 1.0</title>
+<style>
+:root{--bg:#0f0f10;--panel:#171719;--panel2:#202023;--line:#303034;--text:#f4f4f5;--muted:#a1a1aa;--accent:#fff;--user:#2f2f33;--good:#19c37d;--danger:#ef4444;--shadow:0 18px 60px #0009}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",sans-serif}button,input,textarea{font:inherit}.app{height:100dvh;display:grid;grid-template-columns:280px 1fr}.sidebar{background:#111113;border-right:1px solid #242427;display:flex;flex-direction:column;min-width:0}.sideTop{padding:12px}.newChat{width:100%;height:44px;border:1px solid var(--line);background:#19191c;color:var(--text);border-radius:12px;font-weight:650;cursor:pointer}.brand{padding:8px 14px 14px;font-weight:760;font-size:17px;display:flex;align-items:center;gap:9px}.orb{width:25px;height:25px;border-radius:9px;background:linear-gradient(145deg,#fff,#8c8c91);box-shadow:inset 0 0 0 1px #fff8}.threads{flex:1;overflow:auto;padding:0 8px 12px}.thread{display:flex;align-items:center;gap:8px;padding:10px;border-radius:9px;color:#d6d6da;cursor:pointer;font-size:14px}.thread:hover,.thread.active{background:#202023}.threadTitle{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}.threadDelete{border:0;background:transparent;color:#8c8c94;font-size:17px;padding:1px 5px;cursor:pointer;opacity:.4}.thread:hover .threadDelete{opacity:1}.sideFoot{padding:12px;border-top:1px solid #252529;color:var(--muted);font-size:12px;line-height:1.45}.main{min-width:0;position:relative;display:flex;flex-direction:column;background:var(--bg)}.topbar{height:58px;flex:0 0 58px;border-bottom:1px solid #242427;display:flex;align-items:center;justify-content:space-between;padding:0 18px;background:#0f0f10e8;backdrop-filter:blur(12px);z-index:5}.topLeft{display:flex;align-items:center;gap:10px}.menu{display:none;border:0;background:transparent;color:white;font-size:22px;padding:5px}.title{font-weight:700}.modelPill{font-size:11px;border:1px solid #343438;color:#b6b6bd;padding:5px 8px;border-radius:999px}.topActions{display:flex;align-items:center;gap:8px}.iconBtn{height:36px;min-width:36px;border:1px solid #333337;border-radius:10px;background:#18181b;color:#eee;cursor:pointer;padding:0 10px}.iconBtn.on{border-color:#268d68;color:#baffdf;background:#103628}.chat{flex:1;overflow:auto;scroll-behavior:smooth}.messages{width:min(780px,100%);margin:0 auto;padding:28px 18px 190px}.welcome{min-height:58vh;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:12px}.welcome .bigOrb{width:54px;height:54px;border-radius:18px;background:linear-gradient(145deg,#fff,#77777c);box-shadow:0 10px 35px #0008}.welcome h1{font-size:30px;margin:8px 0 0}.welcome p{color:var(--muted);max-width:520px;line-height:1.5;margin:0}.suggestions{display:grid;grid-template-columns:1fr 1fr;gap:9px;width:min(600px,100%);margin-top:14px}.suggest{background:#18181b;color:#ddd;border:1px solid #2c2c30;border-radius:14px;padding:13px;text-align:left;cursor:pointer}.suggest:hover{background:#202023}.msg{display:flex;gap:14px;margin:0 0 27px;line-height:1.58;font-size:15.5px}.msg.user{justify-content:flex-end}.bubble{max-width:84%;overflow-wrap:anywhere}.user .bubble{background:var(--user);padding:10px 14px;border-radius:18px}.assistant .bubble{width:100%}.avatar{width:28px;height:28px;border-radius:9px;flex:0 0 28px;background:linear-gradient(145deg,#fff,#77777c);margin-top:2px}.content{min-width:0}.content p{margin:.15em 0 .7em}.content p:last-child{margin-bottom:0}.content pre{background:#08080a;border:1px solid #29292d;border-radius:12px;padding:13px;overflow:auto;white-space:pre-wrap}.content code{font-family:"SFMono-Regular",Consolas,monospace;font-size:.92em}.content a{color:#7fc7ff}.content ul,.content ol{padding-left:23px}.meta{font-size:11px;color:#777780;margin-top:8px}.msgImage{display:block;max-width:min(360px,72vw);max-height:320px;border-radius:14px;margin:0 0 9px auto;object-fit:cover;border:1px solid #333}.thinking{display:inline-flex;gap:5px;align-items:center;padding:5px 0}.dot{width:6px;height:6px;border-radius:50%;background:#999;animation:pulse 1.1s infinite}.dot:nth-child(2){animation-delay:.15s}.dot:nth-child(3){animation-delay:.3s}@keyframes pulse{0%,70%,100%{opacity:.3;transform:translateY(0)}35%{opacity:1;transform:translateY(-3px)}}.composerWrap{position:absolute;left:0;right:0;bottom:0;padding:0 16px calc(env(safe-area-inset-bottom) + 12px);background:linear-gradient(180deg,transparent 0%,#0f0f10 30%,#0f0f10 100%)}.composer{width:min(780px,100%);margin:auto;background:#242427;border:1px solid #38383d;border-radius:24px;padding:10px 10px 9px;box-shadow:0 -10px 35px #0f0f1099}.preview{display:none;position:relative;width:88px;margin:2px 0 8px 5px}.preview.show{display:block}.preview img{width:88px;height:70px;object-fit:cover;border-radius:12px;border:1px solid #444}.preview button{position:absolute;right:-7px;top:-7px;width:23px;height:23px;border-radius:50%;border:0;background:#eee;color:#111;font-weight:800}.inputRow{display:flex;align-items:flex-end;gap:8px}.addBtn,.sendBtn,.micBtn{width:40px;height:40px;border-radius:50%;border:0;flex:0 0 40px;cursor:pointer}.addBtn,.micBtn{background:transparent;color:#e6e6ea;border:1px solid #414146;font-size:22px}.sendBtn{background:#fff;color:#111;font-size:17px;font-weight:900}.sendBtn:disabled{opacity:.35}.prompt{flex:1;min-height:40px;max-height:150px;resize:none;border:0;outline:none;background:transparent;color:white;padding:9px 3px 7px;font-size:16px;line-height:1.35}.prompt::placeholder{color:#8c8c94}.composerBottom{display:flex;justify-content:space-between;align-items:center;padding:5px 4px 0;color:#85858d;font-size:11px}.attachments{position:absolute;bottom:88px;left:50%;transform:translateX(-50%);width:min(746px,calc(100% - 36px));display:none;background:#202023;border:1px solid #36363b;border-radius:16px;padding:7px;box-shadow:var(--shadow);z-index:20}.attachments.show{display:grid;grid-template-columns:repeat(3,1fr);gap:6px}.attachAction{border:0;background:#29292d;color:#eee;border-radius:11px;padding:12px 8px;cursor:pointer;text-align:center}.attachAction small{display:block;color:#aaa;margin-top:4px}.cameraModal{position:fixed;inset:0;background:#000e;z-index:50;display:none;align-items:center;justify-content:center;padding:16px}.cameraModal.show{display:flex}.cameraCard{width:min(720px,100%);background:#111;border:1px solid #34343a;border-radius:22px;overflow:hidden;box-shadow:var(--shadow)}.cameraVideo{width:100%;aspect-ratio:4/3;background:#000;object-fit:cover;display:block}.cameraBar{padding:12px;display:flex;gap:8px;justify-content:center}.cameraBar button{border:1px solid #3b3b40;border-radius:12px;background:#222;color:#fff;padding:11px 15px}.cameraBar .use{background:white;color:#111;border:0;font-weight:750}.drawerShade{display:none}.statusText.busy{color:#d7d7db}.statusText.ok{color:#83e7bc}.error{color:#ffb4b4}.hidden{display:none!important}
+@media(max-width:760px){.app{display:block}.sidebar{position:fixed;z-index:60;inset:0 auto 0 0;width:min(82vw,310px);transform:translateX(-102%);transition:.2s ease;box-shadow:25px 0 70px #000b}.sidebar.open{transform:translateX(0)}.drawerShade{display:block;position:fixed;z-index:55;inset:0;background:#0009;opacity:0;pointer-events:none;transition:.2s}.drawerShade.show{opacity:1;pointer-events:auto}.main{height:100dvh}.menu{display:block}.topbar{padding:0 11px}.modelPill{display:none}.messages{padding:20px 14px 180px}.welcome{min-height:55vh}.welcome h1{font-size:27px}.suggestions{grid-template-columns:1fr}.msg{gap:10px}.bubble{max-width:91%}.assistant .bubble{max-width:100%}.composerWrap{padding-left:9px;padding-right:9px}.attachments{bottom:92px}.topActions .iconBtn span.label{display:none}}
+</style>
+</head>
+<body>
+<div class="drawerShade" id="drawerShade"></div>
+<div class="app">
+<aside class="sidebar" id="sidebar">
+  <div class="sideTop"><button class="newChat" id="newChat">＋ New chat</button></div>
+  <div class="brand"><span class="orb"></span> Agent 1.0</div>
+  <div class="threads" id="threads"></div>
+  <div class="sideFoot">Smart hybrid AI<br>Terra for everyday work • Sol for harder reasoning<br>Automatic web search when current information matters.</div>
+</aside>
+<main class="main">
+  <header class="topbar">
+    <div class="topLeft"><button class="menu" id="menuBtn">☰</button><div class="title">Agent 1.0</div><div class="modelPill">Smart • Terra + Sol</div></div>
+    <div class="topActions"><button class="iconBtn" id="voiceToggle" title="Speak replies">🔊 <span class="label">Voice</span></button><button class="iconBtn" id="clearBtn" title="Clear current chat">⌫</button></div>
+  </header>
+  <section class="chat" id="chat"><div class="messages" id="messages"></div></section>
+  <div class="attachments" id="attachments">
+    <button class="attachAction" id="uploadBtn">🖼️<small>Photo</small></button>
+    <button class="attachAction" id="cameraBtn">📷<small>Camera</small></button>
+    <button class="attachAction" id="webHintBtn">🌐<small>Search web</small></button>
+  </div>
+  <div class="composerWrap">
+    <div class="composer">
+      <div class="preview" id="preview"><img id="previewImg" alt="selected image"><button id="removeImage">×</button></div>
+      <div class="inputRow">
+        <button class="addBtn" id="addBtn" title="Add">＋</button>
+        <textarea class="prompt" id="prompt" rows="1" placeholder="Message Agent 1.0"></textarea>
+        <button class="micBtn" id="dictateBtn" title="Dictate">🎙</button>
+        <button class="sendBtn" id="sendBtn" title="Send">↑</button>
+      </div>
+      <div class="composerBottom"><span id="status" class="statusText ok">Ready</span><span>Agent 1.0 can make mistakes. Check important info.</span></div>
+    </div>
+  </div>
+</main>
+</div>
+<input id="fileInput" class="hidden" type="file" accept="image/*">
+<div class="cameraModal" id="cameraModal"><div class="cameraCard"><video class="cameraVideo" id="cameraVideo" autoplay muted playsinline></video><div class="cameraBar"><button id="closeCamera">Close</button><button class="use" id="useCamera">Use current view</button></div></div></div>
+<canvas id="cameraCanvas" class="hidden"></canvas>
+<script src="app.js?v=1"></script>
+</body>
+</html>
