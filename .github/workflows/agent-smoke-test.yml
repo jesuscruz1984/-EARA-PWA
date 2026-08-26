@@ -1,0 +1,65 @@
+name: Agent 1.0 Live Smoke Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "agent-1.0/**"
+      - "worker.js"
+      - "secure-worker.js"
+      - "wrangler.jsonc"
+      - ".github/workflows/agent-smoke-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Wait briefly for deployment
+        run: sleep 20
+
+      - name: Test Agent 1.0 page
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ \
+            | grep -q "Agent 1.0"
+
+      - name: Test backend health
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
+            https://eara-pwa.jesuscruz1984.workers.dev/health \
+            | tee /tmp/health.json
+          jq -e '.ok == true' /tmp/health.json >/dev/null
+
+      - name: Test normal Agent chat
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 3 --retry-delay 3 \
+            -H 'Origin: https://jesuscruz1984.github.io' \
+            -H 'Content-Type: application/json' \
+            --data '{"text":"Reply with exactly: Agent smoke test OK","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
+            | tee /tmp/chat.json
+          jq -e '((.text // "") | length) > 0' /tmp/chat.json >/dev/null
+
+      - name: Test real PDF creation
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 2 --retry-delay 3 \
+            -H 'Origin: https://jesuscruz1984.github.io' \
+            -H 'Content-Type: application/json' \
+            --data '{"text":"Make me a professional proposal for Allied Universal using Uniview equipment for 42 cameras and NVRs and make it a PDF.","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
+            | tee /tmp/pdf.json
+          jq -e '.pdfCreated == true and (.files | length) > 0 and ((.files[0].data // "") | length) > 100' /tmp/pdf.json >/dev/null
+          jq -r '.files[0].data' /tmp/pdf.json | base64 -d > /tmp/test.pdf
+          head -c 5 /tmp/test.pdf | grep -q '%PDF-'
+
+      - name: Passed
+        run: echo 'Agent 1.0 live page, chat, and PDF creation all passed.'
