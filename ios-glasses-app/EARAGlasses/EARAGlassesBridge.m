@@ -1,6 +1,6 @@
 #import "EARAGlassesBridge.h"
 #import <CoreBluetooth/CoreBluetooth.h>
-#import <QCSDK/QCCentralManager.h>
+#import "QCCentralManager.h"
 #import <QCSDK/QCSDKCmdCreator.h>
 
 @interface EARAGlassesBridge () <QCCentralManagerDelegate>
@@ -87,26 +87,18 @@
 
 #pragma mark - QCCentralManagerDelegate
 
-- (void)didScanPeripherals:(NSArray *)peripheralArr {
+- (void)didScanPeripherals:(NSArray<QCBlePeripheral *> *)peripheralArr {
     if (!self.tryingToConnect) return;
 
-    for (id candidate in peripheralArr) {
-        CBPeripheral *peripheral = nil;
-        NSString *mac = nil;
-        @try {
-            peripheral = [candidate valueForKey:@"peripheral"];
-            mac = [candidate valueForKey:@"mac"];
-        } @catch (__unused NSException *exception) {
-            continue;
-        }
-
+    for (QCBlePeripheral *candidate in peripheralArr) {
+        CBPeripheral *peripheral = candidate.peripheral;
         NSString *name = peripheral.name ?: @"";
         if ([name.uppercaseString hasPrefix:@"W610"]) {
             self.tryingToConnect = NO;
             [[QCCentralManager shared] stopScan];
             self.statusText = [NSString stringWithFormat:@"Connecting to %@…", name];
-            [self emit:@"connecting" extra:@{ @"name": name, @"mac": mac ?: @"" }];
-            [[QCCentralManager shared] connect:peripheral];
+            [self emit:@"connecting" extra:@{ @"name": name, @"mac": candidate.mac ?: @"" }];
+            [[QCCentralManager shared] connect:peripheral deviceType:QCDeviceTypeGlasses];
             break;
         }
     }
@@ -139,21 +131,9 @@
     }
 }
 
-- (void)didConnected:(CBPeripheral *)peripheral {
-    self.connected = YES;
-    self.statusText = [NSString stringWithFormat:@"%@ connected", peripheral.name ?: @"W610"];
-    [self emit:@"connected" extra:@{ @"name": peripheral.name ?: @"W610" }];
-}
-
-- (void)didDisconnecte:(CBPeripheral *)peripheral {
+- (void)didFailConnected:(CBPeripheral *)peripheral error:(NSError *)error {
     self.connected = NO;
-    self.statusText = @"W610 disconnected";
-    [self emit:@"disconnected" extra:@{ @"name": peripheral.name ?: @"W610" }];
-}
-
-- (void)didFailConnected:(CBPeripheral *)peripheral {
-    self.connected = NO;
-    self.statusText = @"Could not connect to W610";
+    self.statusText = error.localizedDescription.length ? error.localizedDescription : @"Could not connect to W610";
     [self emit:@"error" extra:@{ @"action": @"connect", @"name": peripheral.name ?: @"W610" }];
 }
 
