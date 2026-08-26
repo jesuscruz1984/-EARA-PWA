@@ -18,7 +18,7 @@ let lastGeneratedImage='';
 
 function uid(){return 't_'+Date.now().toString(36)+'_'+Math.random().toString(36).slice(2,8)}
 function loadThreads(){try{const x=JSON.parse(localStorage.getItem(STORE)||'[]');return Array.isArray(x)?x:[]}catch(_){return []}}
-function persistableThreads(){return threads.slice(0,40).map(t=>({...t,messages:(t.messages||[]).map(m=>({...m,image:'',images:[]}))}))}
+function persistableThreads(){return threads.slice(0,40).map(t=>({...t,messages:(t.messages||[]).map(m=>({...m,image:'',images:[],files:(m.files||[]).map(f=>({name:f.name,mime:f.mime,size:f.size||0,data:''}))}))}))}
 function saveThreads(){try{localStorage.setItem(STORE,JSON.stringify(persistableThreads()))}catch(_){}}
 function current(){return threads.find(t=>t.id===currentId)||null}
 function ensureThread(){let t=current();if(t)return t;t={id:uid(),title:'New chat',created:Date.now(),updated:Date.now(),messages:[]};threads.unshift(t);currentId=t.id;localStorage.setItem(CURRENT,currentId);saveThreads();return t}
@@ -36,7 +36,7 @@ function renderText(text){
   for(const line of lines){const m=line.match(/^\s*[-•]\s+(.+)/);if(m){if(!list)list='<ul>';list+=`<li>${m[1]}</li>`;continue}closeList();if(/^@@CODE\d+@@$/.test(line.trim()))out+=line.trim();else if(line.trim())out+=`<p>${line}</p>`;else out+='<br>'}
   closeList();return out.replace(/@@CODE(\d+)@@/g,(_,n)=>blocks[Number(n)]||'');
 }
-function toolLabel(t){return ({web:'Web',python:'Python',image_generation:'Image generation',file_search:'File search',computer:'Computer'}[t]||String(t||''))}
+function toolLabel(t){return ({web:'Web',python:'Python',image_generation:'Image generation',pdf:'PDF creator',file_search:'File search',computer:'Computer'}[t]||String(t||''))}
 function messageMeta(m){
   if(m.role!=='assistant')return '';
   const badges=[];const r=String(m.route||'');
@@ -62,8 +62,9 @@ function renderMessages(){
     const img=m.image?`<img class="msgImage" src="${m.image}" alt="attached image">`:'';
     const file=m.fileName?`<div class="fileChip">📎 <span>${esc(m.fileName)}</span></div>`:'';
     const generated=(m.images||[]).length?`<div class="genImages">${m.images.map((src,i)=>`<img src="${src}" alt="Generated image ${i+1}">`).join('')}</div>`:'';
+    const artifacts=(m.files||[]).length?`<div style="display:grid;gap:10px;margin-top:13px">${m.files.map(f=>{const name=esc(f.name||'Agent-Document.pdf'),mime=esc(f.mime||'application/octet-stream');if(!f.data)return `<div style="display:flex;align-items:center;gap:11px;border:1px solid #3a3a40;background:#18181b;border-radius:14px;padding:12px"><div style="font-size:22px">📄</div><div><strong>${name}</strong><br><small style="color:#92929a">File was created in the original session.</small></div></div>`;const href=`data:${mime};base64,${f.data}`;return `<div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap;border:1px solid #3a3a40;background:#18181b;border-radius:14px;padding:12px"><div style="font-size:22px">📄</div><div style="min-width:0;flex:1"><strong style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${name}</strong><small style="color:#92929a">${f.size?Math.max(1,Math.round(f.size/1024))+' KB • ':''}Ready to open or save</small></div><a href="${href}" download="${name}" target="_blank" rel="noopener" style="display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:0 12px;border-radius:10px;background:#fff;color:#111;text-decoration:none;font-size:12px;font-weight:750;white-space:nowrap">Open / Save PDF</a></div>`}).join('')}</div>`:'';
     if(m.role==='user')return `<div class="msg user"><div class="bubble">${img}${file}<div class="content">${renderText(m.text)}</div></div></div>`;
-    return `<div class="msg assistant"><div class="avatar"></div><div class="bubble"><div class="content">${renderText(m.text)}</div>${generated}${messageMeta(m)?`<div class="meta">${messageMeta(m)}</div>`:''}</div></div>`;
+    return `<div class="msg assistant"><div class="avatar"></div><div class="bubble"><div class="content">${renderText(m.text)}</div>${artifacts}${generated}${messageMeta(m)?`<div class="meta">${messageMeta(m)}</div>`:''}</div></div>`;
   }).join('');scrollBottom();
 }
 function renderAll(){ensureThread();renderThreads();renderMessages();updateVoiceButton()}
@@ -75,12 +76,12 @@ function imageEditFollowup(text){return /\b(make it|change it|edit it|modify it|
 
 async function fetchChat(text,image,file){
   const effectiveImage=image||(!file&&lastGeneratedImage&&imageEditFollowup(text)?lastGeneratedImage:'');
-  const body={text,image:effectiveImage||null,file:file||null,memory:conversationMemory(),memoryCount:totalMemoryCount(),forceWeb:webForce,agentMode:true};
+  const body={text,image:effectiveImage||null,file:file||null,memory:conversationMemory(),memoryCount:totalMemoryCount(),forceWeb:webForce,agentMode:true,localDate:new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'})};
   let last=null;
   for(let attempt=0;attempt<2;attempt++){
     try{
       const r=await fetch(BACKEND+'/agent-chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),cache:'no-store'});
-      const raw=await r.text();if(!r.ok)throw new Error(`HTTP ${r.status}: ${raw}`);const j=JSON.parse(raw);if(j?.text||j?.images?.length)return j;throw new Error('Empty AI response');
+      const raw=await r.text();if(!r.ok)throw new Error(`HTTP ${r.status}: ${raw}`);const j=JSON.parse(raw);if(j?.text||j?.images?.length||j?.files?.length)return j;throw new Error('Empty AI response');
     }catch(e){last=e;if(attempt===0)await new Promise(r=>setTimeout(r,350))}
   }
   throw last||new Error('Request failed');
@@ -97,8 +98,8 @@ async function send(){
   try{
     const j=await fetchChat(displayText,image,file);removeThinking();
     if(j?.images?.length)lastGeneratedImage=j.images[0];
-    addMessage({role:'assistant',text:j.text||'Done.',route:j.route||'',model:j.model||'',toolsUsed:j.toolsUsed||[],images:j.images||[]});
-    const tools=(j.toolsUsed||[]).map(toolLabel);setStatus(tools.length?`Used: ${tools.join(' • ')}`:'Ready','ok');if(voiceOn)speak(j.speech||j.text);
+    addMessage({role:'assistant',text:j.text||'Done.',route:j.route||'',model:j.model||'',toolsUsed:j.toolsUsed||[],images:j.images||[],files:j.files||[]});
+    const tools=(j.toolsUsed||[]).map(toolLabel);setStatus(j.pdfCreated?'PDF ready':(tools.length?`Used: ${tools.join(' • ')}`:'Ready'),'ok');if(voiceOn)speak(j.speech||j.text);
   }catch(e){removeThinking();const msg=friendlyError(e);addMessage({role:'assistant',text:msg,route:'error'});setStatus('Try again','error')}
   finally{busy=false;webForce=false;$('#sendBtn').disabled=false;input.focus();updateSend()}
 }
