@@ -1,0 +1,15 @@
+{
+  "name": "Agent 1.0",
+  "short_name": "Agent 1.0",
+  "description": "General-purpose AI assistant with Terra + Sol reasoning, web search, image understanding and voice.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0f0f10",
+  "theme_color": "#0f0f10",
+  "orientation": "any",
+  "icons": [
+    {"src": "../icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "../icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
