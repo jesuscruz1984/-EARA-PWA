@@ -10,6 +10,7 @@ on:
       - "agent-wrapper.js"
       - "agent-wrapper-v2.js"
       - "agent-wrapper-v3.js"
+      - "agent-wrapper-v4.js"
       - "wrangler.jsonc"
       - ".github/workflows/agent-smoke-test.yml"
   workflow_dispatch:
@@ -60,6 +61,7 @@ jobs:
             https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
             | tee /tmp/chat.json
           jq -e '((.text // "") | length) > 0' /tmp/chat.json >/dev/null
+          jq -e '.route != "oss-fallback" and .route != "gemma-fallback"' /tmp/chat.json >/dev/null
 
       - name: Test exact CSS Tech company lookup
         run: |
@@ -92,4 +94,4 @@ jobs:
           strings /tmp/test.pdf | grep -q 'Allied Universal'
 
       - name: Passed
-        run: echo 'Agent 1.0 live page, model diagnostics, grounded CSS Tech lookup, clean UI output, chat, and branded PDF creation all passed.'
+        run: echo 'Agent 1.0 live page, model diagnostics, enhanced reasoning fallback, grounded CSS Tech lookup, clean UI output, and branded PDF creation all passed.'
