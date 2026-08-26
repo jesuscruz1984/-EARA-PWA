@@ -25,6 +25,8 @@ jobs:
           git clone --depth 1 https://github.com/ebowwa/HeyCyanSmartGlassesSDK.git /tmp/HeyCyanSmartGlassesSDK
           mkdir -p ios-glasses-app/Vendor
           cp -R /tmp/HeyCyanSmartGlassesSDK/ios/QCSDK.framework ios-glasses-app/Vendor/QCSDK.framework
+          cp /tmp/HeyCyanSmartGlassesSDK/ios/QCSDKDemo/QCCentralManager.h ios-glasses-app/EARAGlasses/QCCentralManager.h
+          cp /tmp/HeyCyanSmartGlassesSDK/ios/QCSDKDemo/QCCentralManager.m ios-glasses-app/EARAGlasses/QCCentralManager.m
 
       - name: Generate Xcode project
         working-directory: ios-glasses-app
