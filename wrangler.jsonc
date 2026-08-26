@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "eara-pwa",
-  "main": "agent-wrapper.js",
+  "main": "agent-wrapper-v2.js",
   "compatibility_date": "2026-08-20",
   "workers_dev": true,
   "ai": {
