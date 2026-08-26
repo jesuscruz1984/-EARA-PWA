@@ -121,6 +121,148 @@ function wantsImageTool(text){
   return /\b(generate|create|make|draw|design|render|illustrate)\b[\s\S]{0,50}\b(image|picture|photo|logo|icon|poster|graphic|art|illustration|mockup|wallpaper|diagram)\b|\b(image|picture|photo|logo|icon|poster|graphic|art|illustration|mockup|wallpaper)\b[\s\S]{0,45}\b(generate|create|make|draw|design|render)\b/i.test(String(text||''));
 }
 
+function wantsPdfArtifact(text){
+  return /\bpdf\b|\bportable document format\b/i.test(String(text||''));
+}
+
+function cleanAscii(input){
+  return String(input??'')
+    .replace(/[\u2018\u2019]/g,"'")
+    .replace(/[\u201C\u201D]/g,'"')
+    .replace(/[\u2013\u2014]/g,'-')
+    .replace(/\u2022/g,'-')
+    .replace(/\u00A0/g,' ')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g,'?');
+}
+function pdfEscape(s){return cleanAscii(s).replace(/\\/g,'\\\\').replace(/\(/g,'\\(').replace(/\)/g,'\\)')}
+function wrapPdfText(text,maxWidth,fontSize,bold=false){
+  const avg=(bold?.56:.52)*fontSize,max=Math.max(8,Math.floor(maxWidth/avg)),out=[];
+  for(const p of cleanAscii(text).split(/\r?\n/)){
+    if(!p.trim()){out.push('');continue}
+    const words=p.trim().split(/\s+/);let line='';
+    for(const original of words){
+      let w=original;
+      while(w.length>max){if(line){out.push(line);line=''}out.push(w.slice(0,max));w=w.slice(max)}
+      const cand=line?line+' '+w:w;
+      if(cand.length>max){if(line)out.push(line);line=w}else line=cand;
+    }
+    if(line)out.push(line);
+  }
+  return out;
+}
+function bytesBase64(bytes){
+  let out='';const step=0x8000;
+  for(let i=0;i<bytes.length;i+=step)out+=String.fromCharCode(...bytes.subarray(i,Math.min(bytes.length,i+step)));
+  return btoa(out);
+}
+function safeFileName(input){
+  const s=cleanAscii(input||'Agent-Document').replace(/[^A-Za-z0-9._ -]+/g,'').trim().replace(/\s+/g,'-').slice(0,80);
+  return (s||'Agent-Document').replace(/\.pdf$/i,'')+'.pdf';
+}
+function extractJsonObject(text){
+  let s=String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/```$/,'').trim();
+  const a=s.indexOf('{'),b=s.lastIndexOf('}');if(a<0||b<=a)throw new Error('Document planner returned invalid JSON.');
+  return JSON.parse(s.slice(a,b+1));
+}
+function normalizePdfSpec(raw,requestText,localDate){
+  const obj=raw&&typeof raw==='object'?raw:{};
+  const arr=x=>Array.isArray(x)?x.map(v=>cleanAscii(v)).filter(Boolean):[];
+  const sections=Array.isArray(obj.sections)?obj.sections.slice(0,10).map(s=>({
+    heading:cleanAscii(s?.heading||'Project Details').slice(0,90),
+    paragraphs:arr(s?.paragraphs).slice(0,5),
+    bullets:arr(s?.bullets).slice(0,12)
+  })):[];
+  const equipment=Array.isArray(obj.equipment)?obj.equipment.slice(0,30).map(r=>({
+    item:cleanAscii(r?.item||'').slice(0,130),qty:cleanAscii(r?.qty??'').slice(0,24),description:cleanAscii(r?.description||'').slice(0,300)
+  })).filter(r=>r.item||r.description):[];
+  return {
+    title:cleanAscii(obj.title||'Professional Proposal').slice(0,130),
+    subtitle:cleanAscii(obj.subtitle||'').slice(0,180),
+    client:cleanAscii(obj.client||obj.preparedFor||'').slice(0,120),
+    preparedBy:cleanAscii(obj.preparedBy||'').slice(0,120),
+    date:cleanAscii(obj.date||localDate||'').slice(0,80),
+    reference:cleanAscii(obj.reference||'').slice(0,80),
+    objective:cleanAscii(obj.objective||'').slice(0,650),
+    executiveSummary:cleanAscii(obj.executiveSummary||'').slice(0,2400),
+    scope:arr(obj.scope).slice(0,16),equipment,sections,
+    assumptions:arr(obj.assumptions).slice(0,16),
+    commercialNotes:arr(obj.commercialNotes).slice(0,14),
+    nextSteps:arr(obj.nextSteps).slice(0,12),
+    sourceRequest:cleanAscii(requestText).slice(0,500)
+  };
+}
+function buildProfessionalPdf(spec){
+  const W=612,H=792,M=50,navy=[.05,.16,.30],blue=[.08,.38,.65],light=[.94,.96,.98],gray=[.36,.39,.43],dark=[.10,.12,.15];
+  const pages=[];let cmds=[],y=H-M;
+  const rgb=a=>`${a[0].toFixed(3)} ${a[1].toFixed(3)} ${a[2].toFixed(3)}`;
+  const text=(s,x,yy,size=10,bold=false,color=dark)=>cmds.push(`BT /${bold?'F2':'F1'} ${size} Tf ${rgb(color)} rg 1 0 0 1 ${x.toFixed(2)} ${yy.toFixed(2)} Tm (${pdfEscape(s)}) Tj ET`);
+  const rect=(x,yy,w,h,color)=>cmds.push(`${rgb(color)} rg ${x} ${yy} ${w} ${h} re f`);
+  const line=(x1,y1,x2,y2,color=gray,width=1)=>cmds.push(`${rgb(color)} RG ${width} w ${x1} ${y1} m ${x2} ${y2} l S`);
+  const pageHeader=()=>{
+    const label=spec.preparedBy?cleanAscii(spec.preparedBy).toUpperCase():'PROFESSIONAL PROPOSAL';
+    rect(0,H-44,W,44,navy);text(label.slice(0,62),M,H-27,9,true,[1,1,1]);
+    line(M,36,W-M,36,[.75,.78,.82],.5);text('Confidential',M,22,8,false,gray);text(String(pages.length+1),W-M-8,22,8,false,gray);y=H-76;
+  };
+  const addPage=(content=false)=>{if(cmds.length)pages.push(cmds.join('\n'));cmds=[];y=H-M;if(content)pageHeader()};
+  const ensure=need=>{if(y-need<58)addPage(true)};
+  const paragraph=(s,{size=10,leading=14,bold=false,color=dark,indent=0,spaceAfter=8}={})=>{const lines=wrapPdfText(s,W-2*M-indent,size,bold);ensure(lines.length*leading+spaceAfter);for(const ln of lines){if(ln)text(ln,M+indent,y,size,bold,color);y-=leading}y-=spaceAfter};
+  const heading=s=>{ensure(34);text(cleanAscii(s).toUpperCase(),M,y,12,true,blue);y-=9;line(M,y,W-M,y,[.80,.85,.90],.8);y-=18};
+  const bullets=arr=>{for(const b of arr||[]){const lines=wrapPdfText(b,W-2*M-20,10,false);ensure(lines.length*14+5);text('-',M+2,y,10,true,blue);for(const ln of lines){text(ln,M+18,y,10,false,dark);y-=14}y-=4}};
+  const table=rows=>{
+    if(!rows?.length)return;const cols=[235,48,229],x0=M,headH=26;
+    const drawHeader=()=>{rect(x0,y-headH,W-2*M,headH,navy);text('Equipment / Service',x0+8,y-17,9,true,[1,1,1]);text('Qty',x0+cols[0]+8,y-17,9,true,[1,1,1]);text('Description',x0+cols[0]+cols[1]+8,y-17,9,true,[1,1,1]);y-=headH};
+    ensure(headH+36);drawHeader();
+    for(const r of rows){const a=wrapPdfText(r.item||'',cols[0]-14,9.3),b=wrapPdfText(String(r.qty??''),cols[1]-14,9.3,true),c=wrapPdfText(r.description||'',cols[2]-14,9.3),n=Math.max(a.length,b.length,c.length,1),rh=Math.max(24,n*12+10);if(y-rh<58){addPage(true);drawHeader()}rect(x0,y-rh,W-2*M,rh,light);line(x0,y-rh,x0+W-2*M,y-rh,[.78,.82,.86],.5);line(x0+cols[0],y-rh,x0+cols[0],y,[.78,.82,.86],.5);line(x0+cols[0]+cols[1],y-rh,x0+cols[0]+cols[1],y,[.78,.82,.86],.5);for(let i=0;i<n;i++){const yy=y-16-i*12;if(a[i])text(a[i],x0+7,yy,9.3,false,dark);if(b[i])text(b[i],x0+cols[0]+8,yy,9.3,true,dark);if(c[i])text(c[i],x0+cols[0]+cols[1]+7,yy,9.3,false,dark)}y-=rh}y-=12;
+  };
+
+  rect(0,0,W,H,[1,1,1]);rect(0,H-205,W,205,navy);rect(M,H-225,80,4,blue);text('PROPOSAL',M,H-78,11,true,[.63,.82,1]);
+  let titleLines=wrapPdfText(spec.title||'Professional Proposal',W-2*M,25,true),ty=H-115;for(const ln of titleLines.slice(0,3)){text(ln,M,ty,25,true,[1,1,1]);ty-=31}
+  if(spec.subtitle){for(const ln of wrapPdfText(spec.subtitle,W-2*M,13).slice(0,3)){text(ln,M,ty-4,13,false,[.85,.90,.96]);ty-=18}}
+  y=H-286;const info=[];if(spec.client)info.push(['Prepared for',spec.client]);if(spec.preparedBy)info.push(['Prepared by',spec.preparedBy]);if(spec.date)info.push(['Date',spec.date]);if(spec.reference)info.push(['Reference',spec.reference]);
+  for(const [k,v] of info){text(k.toUpperCase(),M,y,8.5,true,blue);for(const ln of wrapPdfText(v,W-2*M,12).slice(0,3)){text(ln,M,y-20,12,false,dark);y-=16}y-=24}
+  rect(M,88,W-2*M,76,light);text('PROJECT OBJECTIVE',M+16,142,9,true,blue);const obj=spec.objective||spec.executiveSummary||'Deliver a professional solution aligned to the client requirements.';let oy=122;for(const ln of wrapPdfText(obj,W-2*M-32,10).slice(0,5)){text(ln,M+16,oy,10,false,dark);oy-=13}
+  text('Prepared as a client-ready professional project document.',M,52,8.5,false,gray);
+
+  addPage(true);
+  if(spec.executiveSummary){heading('Executive Summary');paragraph(spec.executiveSummary,{size:10.5,leading:15,spaceAfter:12})}
+  if(spec.scope?.length){heading('Scope of Work');bullets(spec.scope);y-=8}
+  if(spec.equipment?.length){heading('Proposed Equipment');table(spec.equipment)}
+  for(const s of spec.sections||[]){heading(s.heading||'Project Details');for(const p of s.paragraphs||[])paragraph(p);bullets(s.bullets||[]);y-=6}
+  if(spec.assumptions?.length){heading('Assumptions & Exclusions');bullets(spec.assumptions);y-=6}
+  if(spec.commercialNotes?.length){heading('Commercial Notes');bullets(spec.commercialNotes);y-=6}
+  if(spec.nextSteps?.length){heading('Next Steps');bullets(spec.nextSteps);y-=6}
+  if(cmds.length)pages.push(cmds.join('\n'));
+
+  const n=pages.length,objs=[];objs[1]='<< /Type /Catalog /Pages 2 0 R >>';const kids=[];for(let i=0;i<n;i++)kids.push(`${5+i*2} 0 R`);objs[2]=`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${n} >>`;objs[3]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';objs[4]='<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+  for(let i=0;i<n;i++){const pageObj=5+i*2,contentObj=pageObj+1,stream=pages[i];objs[pageObj]=`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${contentObj} 0 R >>`;objs[contentObj]=`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`}
+  let pdf='%PDF-1.4\n%AGENT10\n';const offsets=[0],maxObj=4+n*2;for(let i=1;i<=maxObj;i++){offsets[i]=pdf.length;pdf+=`${i} 0 obj\n${objs[i]}\nendobj\n`}const xref=pdf.length;pdf+=`xref\n0 ${maxObj+1}\n0000000000 65535 f \n`;for(let i=1;i<=maxObj;i++)pdf+=String(offsets[i]).padStart(10,'0')+' 00000 n \n';pdf+=`trailer\n<< /Size ${maxObj+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return new TextEncoder().encode(pdf);
+}
+
+async function handlePdfArtifact(body,env,headers){
+  const requestText=String(body?.text||'').trim(),localDate=String(body?.localDate||'').trim();
+  const context=String(body?.memory||'').slice(-16000);
+  const instructions=`You are Agent 1.0 creating a polished client-ready business PDF. Return ONE JSON object only, with no markdown and no commentary. Do not use placeholders such as [Insert Date], [Your Company], [Name], or TBD. If a field is unknown, omit it or write a professional neutral note in assumptions instead. Do not invent pricing, exact model numbers, warranties, retention periods, company identity, or contact information unless supplied by the user or recent conversation. For surveillance/security proposals, make the scope technically credible and professional, but keep unspecified equipment descriptive rather than fabricating model numbers. Write concise, polished business language. Schema: {"title":"...","subtitle":"...","client":"...","preparedBy":"...","date":"...","reference":"...","objective":"...","executiveSummary":"...","scope":["..."],"equipment":[{"item":"...","qty":"...","description":"..."}],"sections":[{"heading":"...","paragraphs":["..."],"bullets":["..."]}],"assumptions":["..."],"commercialNotes":["..."],"nextSteps":["..."]}. Use only fields that improve the final document.`;
+  const input=[{role:'user',content:[{type:'input_text',text:`${context?`RECENT CONVERSATION:\n${context}\n\n`:''}USER REQUEST:\n${requestText}\n\nUSER LOCAL DATE:\n${localDate||'Not provided'}`}]}];
+  const ai=gatewayAI(env);let result=null,model='',last=null;
+  for(const candidate of [SOL,TERRA]){
+    try{result=await ai.run(candidate,{input,instructions,max_output_tokens:2300,reasoning:{effort:candidate===SOL?'medium':'low'},store:false});const t=responseText(result);if(t){model=candidate;break}}catch(e){last=e;result=null}
+  }
+  if(!result)throw last||new Error('Could not create PDF content.');
+  let spec;try{spec=normalizePdfSpec(extractJsonObject(responseText(result)),requestText,localDate)}catch(e){
+    const retry=await ai.run(TERRA,{input,instructions:instructions+'\nIMPORTANT: Your previous response was not valid JSON. Return valid JSON only.',max_output_tokens:2000,reasoning:{effort:'low'},store:false});model=TERRA;spec=normalizePdfSpec(extractJsonObject(responseText(retry)),requestText,localDate);
+  }
+  const bytes=buildProfessionalPdf(spec),filename=safeFileName(`${spec.client?spec.client+'-':''}${spec.title||'Proposal'}`);
+  return json({
+    text:`Done - I created the professional PDF${spec.client?` for ${spec.client}`:''}. Open or save the file below.`,
+    speech:'Done. I created the professional PDF and attached it below.',
+    model,route:model===SOL?'sol':'terra',toolsUsed:['pdf'],pdfCreated:true,
+    files:[{name:filename,mime:'application/pdf',data:bytesBase64(bytes),size:bytes.length}]
+  },200,headers);
+}
+
 function agentToolPlan(text,forceWeb,file){
   const tools=[],labels=[];
   if(wantsWebTool(text,forceWeb)){
@@ -166,7 +308,7 @@ function responseImages(result){
   return [...new Set(out)].slice(0,4);
 }
 
-function responseTools(result){
+function responseTools(result,planned=[]){
   const used=new Set();
   const scan=value=>{
     if(!value||typeof value!=='object')return;
@@ -180,7 +322,7 @@ function responseTools(result){
     for(const v of Object.values(value))scan(v);
   };
   scan(result?.output||[]);
-  return [...used];
+  return used.size?[...used]:planned.filter(x=>x==='web'&&wantsWebTool('',false));
 }
 
 function agentInput(text,memory,image,file){
@@ -207,6 +349,8 @@ async function handleAgentChat(request,env,headers){
       model:'routing information',route:'local',toolsUsed:[]
     },200,headers);
   }
+
+  if(wantsPdfArtifact(text))return handlePdfArtifact(body,env,headers);
 
   const file=body?.file&&body.file.data?body.file:null;
   const image=typeof body?.image==='string'?body.image:'';
@@ -259,7 +403,7 @@ async function handleAgentChat(request,env,headers){
 
   const textOut=responseText(result)|| (responseImages(result).length?'I created the image.':'I completed the task.');
   const images=responseImages(result);
-  const toolsUsed=responseTools(result);
+  const toolsUsed=responseTools(result,plan.labels);
   const route=model===SOL?'sol':'terra';
   return json({
     text:textOut,
@@ -298,7 +442,7 @@ export default {
         normalModel:'gpt-5.6-terra',
         complexModel:'gpt-5.6-sol',
         fallbackIsolation:true,
-        agentTools:['web search','code interpreter','image generation','vision','direct file input','voice'],
+        agentTools:['web search','code interpreter','image generation','professional PDF creation','vision','direct file input','voice'],
         routing:'Terra for normal use; Sol for deep reasoning; Cloudflare-hosted fallbacks bypass AI Gateway'
       },200,headers);
     }
@@ -311,6 +455,7 @@ export default {
           {id:'web',name:'Web search'},
           {id:'python',name:'Code interpreter / Python'},
           {id:'image_generation',name:'Image generation'},
+          {id:'pdf',name:'Professional PDF creation + downloadable file'},
           {id:'vision',name:'Camera + image understanding'},
           {id:'files',name:'PDF / Office / spreadsheet / text file input'},
           {id:'voice',name:'Voice dictation + spoken replies'},
