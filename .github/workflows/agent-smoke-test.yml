@@ -9,6 +9,7 @@ on:
       - "secure-worker.js"
       - "agent-wrapper.js"
       - "agent-wrapper-v2.js"
+      - "agent-wrapper-v3.js"
       - "wrangler.jsonc"
       - ".github/workflows/agent-smoke-test.yml"
   workflow_dispatch:
@@ -29,7 +30,8 @@ jobs:
           set -euo pipefail
           curl --fail --silent --show-error --retry 5 --retry-delay 5 \
             https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ \
-            | grep -q "Agent 1.0"
+            -o /tmp/agent.html
+          grep -q "Agent 1.0" /tmp/agent.html
 
       - name: Test backend health
         run: |
@@ -63,6 +65,7 @@ jobs:
           jq -r '.text' /tmp/css.json | grep -qi 'csstech.net'
           jq -r '.text' /tmp/css.json | grep -qi 'Miami'
           ! jq -r '.text' /tmp/css.json | grep -qi 'Austin'
+          ! jq -r '.text' /tmp/css.json | grep -qi 'target="_blank"'
 
       - name: Test branded Allied Universal PDF creation
         run: |
@@ -80,4 +83,4 @@ jobs:
           strings /tmp/test.pdf | grep -q 'Allied Universal'
 
       - name: Passed
-        run: echo 'Agent 1.0 live page, grounded CSS Tech lookup, chat, and branded PDF creation all passed.'
+        run: echo 'Agent 1.0 live page, grounded CSS Tech lookup, clean UI output, chat, and branded PDF creation all passed.'
