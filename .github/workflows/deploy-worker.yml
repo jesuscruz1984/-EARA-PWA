@@ -6,6 +6,7 @@ on:
     paths:
       - "worker.js"
       - "secure-worker.js"
+      - "agent-wrapper.js"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-worker.yml"
   workflow_dispatch:
