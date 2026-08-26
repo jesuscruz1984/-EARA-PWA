@@ -41,6 +41,15 @@ jobs:
             | tee /tmp/health.json
           jq -e '.ok == true' /tmp/health.json >/dev/null
 
+      - name: Diagnose primary GPT models
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --retry 2 --retry-delay 3 \
+            -H 'Origin: https://jesuscruz1984.github.io' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-model-diagnostics \
+            | tee /tmp/models.json
+          jq . /tmp/models.json
+
       - name: Test normal Agent chat
         run: |
           set -euo pipefail
@@ -83,4 +92,4 @@ jobs:
           strings /tmp/test.pdf | grep -q 'Allied Universal'
 
       - name: Passed
-        run: echo 'Agent 1.0 live page, grounded CSS Tech lookup, clean UI output, chat, and branded PDF creation all passed.'
+        run: echo 'Agent 1.0 live page, model diagnostics, grounded CSS Tech lookup, clean UI output, chat, and branded PDF creation all passed.'
