@@ -23,7 +23,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -51,17 +51,49 @@ jobs:
         working-directory: android-app
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Install and launch APK in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          script: |
+            set -euxo pipefail
+            APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
+            adb install -r "$APK"
+            adb logcat -c
+            adb shell am force-stop com.eara.ai || true
+            adb shell monkey -p com.eara.ai -c android.intent.category.LAUNCHER 1
+            sleep 10
+            echo "=== Agent process ==="
+            PID="$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+            echo "PID=$PID"
+            echo "=== Foreground activity ==="
+            adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity|com\.eara\.ai" | head -40 || true
+            echo "=== Crash scan ==="
+            adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E '*:S' > /tmp/agent-crash.log || true
+            cat /tmp/agent-crash.log || true
+            if [ -z "$PID" ]; then
+              echo "Agent 1.0 process is not alive after launch."
+              exit 1
+            fi
+            if grep -E "FATAL EXCEPTION|Process: com\.eara\.ai" /tmp/agent-crash.log; then
+              echo "Agent 1.0 crashed during startup."
+              exit 1
+            fi
+
       - name: Prepare named APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v27.apk
-          sha256sum Agent-1.0-ORDRO-EP6-v27.apk > Agent-1.0-ORDRO-EP6-v27.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v28.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v28.apk > Agent-1.0-ORDRO-EP6-v28.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v27-apk
+          name: Agent-1.0-ORDRO-EP6-v28-apk
           path: |
-            Agent-1.0-ORDRO-EP6-v27.apk
-            Agent-1.0-ORDRO-EP6-v27.apk.sha256
+            Agent-1.0-ORDRO-EP6-v28.apk
+            Agent-1.0-ORDRO-EP6-v28.apk.sha256
           if-no-files-found: error
           retention-days: 30
