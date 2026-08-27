@@ -1,4 +1,4 @@
-name: Build EARA Android APK
+name: Build Agent 1.0 ORDRO Android APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "android-app/**"
+      - "agent-1.0/**"
       - "app.js"
       - "handsfree.js"
       - "index.html"
@@ -52,15 +53,15 @@ jobs:
 
       - name: Prepare named APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk EARA-v26-android.apk
-          sha256sum EARA-v26-android.apk > EARA-v26-android.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v27.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v27.apk > Agent-1.0-ORDRO-EP6-v27.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: EARA-v26-android-apk
+          name: Agent-1.0-ORDRO-EP6-v27-apk
           path: |
-            EARA-v26-android.apk
-            EARA-v26-android.apk.sha256
+            Agent-1.0-ORDRO-EP6-v27.apk
+            Agent-1.0-ORDRO-EP6-v27.apk.sha256
           if-no-files-found: error
           retention-days: 30
