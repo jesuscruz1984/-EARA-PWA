@@ -59,7 +59,7 @@ jobs:
           profile: pixel_6
           disable-animations: true
           script: |
-            set -euxo pipefail
+            set -eu
             APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
             adb install -r "$APK"
             adb logcat -c
