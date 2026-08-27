@@ -14,16 +14,21 @@ import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.util.Log;
+import android.view.Gravity;
 import android.view.TextureView;
+import android.view.View;
 import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
+import android.webkit.WebResourceError;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
+import android.widget.TextView;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -33,16 +38,21 @@ import java.util.Arrays;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
+    private static final String TAG = "Agent10";
     private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/";
     private static final String APP_HOST = "jesuscruz1984.github.io";
     private static final int PERMISSION_REQUEST = 4201;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private FrameLayout root;
+    private TextView bootStatus;
+    private TextureView wearableSurface;
     private WebView webView;
     private SpeechRecognizer speechRecognizer;
     private Intent speechIntent;
     private PermissionRequest pendingWebPermission;
     private boolean nativeListening;
+    private boolean appInitialized;
     private OrdroCameraBridge ordroCamera;
 
     @Override
@@ -51,22 +61,99 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(Color.rgb(250, 250, 250));
         getWindow().setNavigationBarColor(Color.WHITE);
 
-        FrameLayout root = new FrameLayout(this);
-        TextureView wearableSurface = new TextureView(this);
-        FrameLayout.LayoutParams wearableParams = new FrameLayout.LayoutParams(720, 400);
-        root.addView(wearableSurface, wearableParams);
+        // Draw a real app window immediately. Heavy components are deliberately
+        // created after the first frame so WebView / media startup cannot leave
+        // Android's launch splash stuck on slower or vendor-modified devices.
+        root = new FrameLayout(this);
+        root.setBackgroundColor(Color.WHITE);
 
-        webView = new WebView(this);
-        root.addView(webView, new FrameLayout.LayoutParams(
+        bootStatus = new TextView(this);
+        bootStatus.setText("Agent 1.0\nStarting…");
+        bootStatus.setTextColor(Color.rgb(25, 25, 25));
+        bootStatus.setTextSize(22f);
+        bootStatus.setGravity(Gravity.CENTER);
+        bootStatus.setPadding(48, 48, 48, 48);
+        root.addView(bootStatus, new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT));
+
         setContentView(root);
 
-        ordroCamera = new OrdroCameraBridge(this, wearableSurface, this::dispatchWearableEvent);
-        configureWebView();
-        configureNativeSpeech();
-        requestRequiredPermissions();
-        webView.loadUrl(APP_URL);
+        // post() guarantees Android gets an opportunity to draw the app's own
+        // window before WebView, speech services or the wearable bridge start.
+        root.post(() -> mainHandler.postDelayed(this::initializeApp, 120));
+    }
+
+    private void initializeApp() {
+        if (appInitialized || isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
+        appInitialized = true;
+        setBootStatus("Agent 1.0\nOpening…");
+
+        try {
+            wearableSurface = new TextureView(this);
+            wearableSurface.setVisibility(View.INVISIBLE);
+            FrameLayout.LayoutParams wearableParams = new FrameLayout.LayoutParams(720, 400);
+            root.addView(wearableSurface, 0, wearableParams);
+
+            webView = new WebView(this);
+            webView.setBackgroundColor(Color.WHITE);
+            webView.setVisibility(View.INVISIBLE);
+            root.addView(webView, 1, new FrameLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT));
+
+            configureWebView();
+            webView.loadUrl(APP_URL);
+
+            // None of these services are required to paint/open the app. Start
+            // them only after the WebView has been asked to load.
+            mainHandler.postDelayed(this::initializeOptionalServices, 500);
+        } catch (Throwable t) {
+            Log.e(TAG, "Startup failed", t);
+            showStartupFailure(t);
+        }
+    }
+
+    private void initializeOptionalServices() {
+        if (isFinishing() || (Build.VERSION.SDK_INT >= 17 && isDestroyed())) return;
+        try {
+            if (wearableSurface != null && ordroCamera == null) {
+                ordroCamera = new OrdroCameraBridge(this, wearableSurface, this::dispatchWearableEvent);
+            }
+        } catch (Throwable t) {
+            Log.e(TAG, "Wearable bridge initialization failed", t);
+        }
+
+        try {
+            configureNativeSpeech();
+        } catch (Throwable t) {
+            Log.e(TAG, "Speech initialization failed", t);
+        }
+
+        try {
+            requestRequiredPermissions();
+        } catch (Throwable t) {
+            Log.e(TAG, "Permission request failed", t);
+        }
+    }
+
+    private void setBootStatus(String message) {
+        if (bootStatus != null) bootStatus.setText(message);
+    }
+
+    private void revealWebView() {
+        if (webView != null) webView.setVisibility(View.VISIBLE);
+        if (bootStatus != null) bootStatus.setVisibility(View.GONE);
+    }
+
+    private void showStartupFailure(Throwable t) {
+        if (webView != null) webView.setVisibility(View.GONE);
+        if (bootStatus != null) {
+            bootStatus.setVisibility(View.VISIBLE);
+            String type = t == null ? "unknown error" : t.getClass().getSimpleName();
+            bootStatus.setText("Agent 1.0 could not start.\n\n" + type +
+                    "\n\nUpdate Android System WebView/Chrome and reopen Agent 1.0.");
+        }
     }
 
     private void configureWebView() {
@@ -80,10 +167,32 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " Agent-1.0-Android/27 ORDRO-EP6");
+        settings.setUserAgentString(settings.getUserAgentString() + " Agent-1.0-Android/29 ORDRO-EP6");
 
         webView.addJavascriptInterface(new EaraNativeBridge(), "EARANative");
         webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                revealWebView();
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                revealWebView();
+            }
+
+            @Override
+            public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
+                if (request != null && request.isForMainFrame()) {
+                    String detail = error == null || error.getDescription() == null
+                            ? "Check your internet connection."
+                            : error.getDescription().toString();
+                    setBootStatus("Agent 1.0\nCould not load\n\n" + detail);
+                    if (bootStatus != null) bootStatus.setVisibility(View.VISIBLE);
+                    if (webView != null) webView.setVisibility(View.GONE);
+                }
+            }
+
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
@@ -172,6 +281,7 @@ public class MainActivity extends Activity {
     }
 
     private void configureNativeSpeech() {
+        if (speechRecognizer != null) return;
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return;
         speechRecognizer = SpeechRecognizer.createSpeechRecognizer(this);
         speechIntent = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
@@ -276,13 +386,17 @@ public class MainActivity extends Activity {
                 "final:" + isFinal + "," +
                 "error:" + JSONObject.quote(error == null ? "" : error) +
                 "}}));";
-        runOnUiThread(() -> webView.evaluateJavascript(script, null));
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(script, null);
+        });
     }
 
     private void dispatchWearableEvent(String statusJson) {
         if (webView == null || statusJson == null || statusJson.isEmpty()) return;
         String script = "window.dispatchEvent(new CustomEvent('eara-native-wearable',{detail:" + statusJson + "}));";
-        runOnUiThread(() -> webView.evaluateJavascript(script, null));
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(script, null);
+        });
     }
 
     public class EaraNativeBridge {
@@ -352,6 +466,7 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null);
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
             speechRecognizer = null;
