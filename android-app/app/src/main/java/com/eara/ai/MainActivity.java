@@ -6,6 +6,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -13,6 +14,8 @@ import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
 import android.speech.SpeechRecognizer;
+import android.view.TextureView;
+import android.view.ViewGroup;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
@@ -20,6 +23,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.widget.Toast;
 
 import org.json.JSONObject;
@@ -29,7 +33,7 @@ import java.util.Arrays;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/";
+    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/";
     private static final String APP_HOST = "jesuscruz1984.github.io";
     private static final int PERMISSION_REQUEST = 4201;
 
@@ -39,15 +43,26 @@ public class MainActivity extends Activity {
     private Intent speechIntent;
     private PermissionRequest pendingWebPermission;
     private boolean nativeListening;
+    private OrdroCameraBridge ordroCamera;
 
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
-        getWindow().setStatusBarColor(Color.rgb(3, 9, 20));
-        getWindow().setNavigationBarColor(Color.rgb(3, 9, 20));
+        getWindow().setStatusBarColor(Color.rgb(250, 250, 250));
+        getWindow().setNavigationBarColor(Color.WHITE);
+
+        FrameLayout root = new FrameLayout(this);
+        TextureView wearableSurface = new TextureView(this);
+        FrameLayout.LayoutParams wearableParams = new FrameLayout.LayoutParams(720, 400);
+        root.addView(wearableSurface, wearableParams);
 
         webView = new WebView(this);
-        setContentView(webView);
+        root.addView(webView, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+
+        ordroCamera = new OrdroCameraBridge(this, wearableSurface, this::dispatchWearableEvent);
         configureWebView();
         configureNativeSpeech();
         requestRequiredPermissions();
@@ -65,7 +80,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " EARA-Android/26");
+        settings.setUserAgentString(settings.getUserAgentString() + " Agent-1.0-Android/27 ORDRO-EP6");
 
         webView.addJavascriptInterface(new EaraNativeBridge(), "EARANative");
         webView.setWebViewClient(new WebViewClient() {
@@ -102,7 +117,7 @@ public class MainActivity extends Activity {
         boolean needsCamera = Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_VIDEO_CAPTURE);
         boolean needsMic = Arrays.asList(request.getResources()).contains(PermissionRequest.RESOURCE_AUDIO_CAPTURE);
         if ((needsCamera && !hasPermission(Manifest.permission.CAMERA)) ||
-            (needsMic && !hasPermission(Manifest.permission.RECORD_AUDIO))) {
+                (needsMic && !hasPermission(Manifest.permission.RECORD_AUDIO))) {
             pendingWebPermission = request;
             requestRequiredPermissions();
             return;
@@ -124,6 +139,11 @@ public class MainActivity extends Activity {
         ArrayList<String> missing = new ArrayList<>();
         if (!hasPermission(Manifest.permission.CAMERA)) missing.add(Manifest.permission.CAMERA);
         if (!hasPermission(Manifest.permission.RECORD_AUDIO)) missing.add(Manifest.permission.RECORD_AUDIO);
+        if (Build.VERSION.SDK_INT >= 33) {
+            if (!hasPermission(Manifest.permission.NEARBY_WIFI_DEVICES)) missing.add(Manifest.permission.NEARBY_WIFI_DEVICES);
+        } else {
+            if (!hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)) missing.add(Manifest.permission.ACCESS_FINE_LOCATION);
+        }
         if (!missing.isEmpty()) requestPermissions(missing.toArray(new String[0]), PERMISSION_REQUEST);
     }
 
@@ -145,9 +165,10 @@ public class MainActivity extends Activity {
         if (hasPermission(Manifest.permission.RECORD_AUDIO)) {
             dispatchNativeEvent("ready", "", false, "");
         } else {
-            Toast.makeText(this, "Microphone permission is needed for the Eara wake word.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Microphone permission is needed for voice input.", Toast.LENGTH_LONG).show();
             dispatchNativeEvent("error", "", false, "not-allowed");
         }
+        if (ordroCamera != null) ordroCamera.refreshExistingWifi();
     }
 
     private void configureNativeSpeech() {
@@ -250,11 +271,17 @@ public class MainActivity extends Activity {
     private void dispatchNativeEvent(String type, String text, boolean isFinal, String error) {
         if (webView == null) return;
         String script = "window.dispatchEvent(new CustomEvent('eara-native-speech',{detail:{" +
-            "type:" + JSONObject.quote(type) + "," +
-            "text:" + JSONObject.quote(text == null ? "" : text) + "," +
-            "final:" + isFinal + "," +
-            "error:" + JSONObject.quote(error == null ? "" : error) +
-            "}}));";
+                "type:" + JSONObject.quote(type) + "," +
+                "text:" + JSONObject.quote(text == null ? "" : text) + "," +
+                "final:" + isFinal + "," +
+                "error:" + JSONObject.quote(error == null ? "" : error) +
+                "}}));";
+        runOnUiThread(() -> webView.evaluateJavascript(script, null));
+    }
+
+    private void dispatchWearableEvent(String statusJson) {
+        if (webView == null || statusJson == null || statusJson.isEmpty()) return;
+        String script = "window.dispatchEvent(new CustomEvent('eara-native-wearable',{detail:" + statusJson + "}));";
         runOnUiThread(() -> webView.evaluateJavascript(script, null));
     }
 
@@ -275,6 +302,33 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public String getWearableCameraStatus() {
+            return ordroCamera == null ? "{\"supported\":false}" : ordroCamera.statusJson();
+        }
+
+        @JavascriptInterface
+        public String connectWearableCamera() {
+            if (ordroCamera != null) ordroCamera.connect();
+            return getWearableCameraStatus();
+        }
+
+        @JavascriptInterface
+        public String captureWearableFrame() {
+            return ordroCamera == null ? "" : ordroCamera.captureFrameDataUrl();
+        }
+
+        @JavascriptInterface
+        public void disconnectWearableCamera() {
+            if (ordroCamera != null) ordroCamera.disconnect();
+        }
+
+        @JavascriptInterface
+        public void openWifiSettings() {
+            if (ordroCamera != null) ordroCamera.openWifiPanel();
+            else runOnUiThread(() -> startActivity(new Intent(Settings.ACTION_WIFI_SETTINGS)));
+        }
+
+        @JavascriptInterface
         public void openAppSettings() {
             runOnUiThread(() -> {
                 Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
@@ -282,6 +336,12 @@ public class MainActivity extends Activity {
                 startActivity(intent);
             });
         }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (ordroCamera != null) mainHandler.postDelayed(ordroCamera::refreshExistingWifi, 700);
     }
 
     @Override
@@ -295,6 +355,10 @@ public class MainActivity extends Activity {
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
             speechRecognizer = null;
+        }
+        if (ordroCamera != null) {
+            ordroCamera.release();
+            ordroCamera = null;
         }
         if (webView != null) {
             webView.removeJavascriptInterface("EARANative");
