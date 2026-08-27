@@ -99,11 +99,12 @@ public final class OrdroCameraBridge {
     public void refreshExistingWifi() {
         main.post(() -> {
             Network wifi = findWifiNetwork();
-            if (wifi != null) {
+            if (wifi != null && isLikelyCameraNetwork(wifi)) {
+                if (wifi.equals(cameraNetwork) && frameReady) return;
                 cameraNetwork = wifi;
                 host = gatewayFor(wifi);
                 startRtsp(wifi);
-            } else {
+            } else if (cameraNetwork == null) {
                 update("disconnected", false, "Connect to the EP6 Wi-Fi hotspot to use the wearable camera.");
             }
         });
@@ -243,14 +244,14 @@ public final class OrdroCameraBridge {
     }
 
     private boolean isLikelyCameraNetwork(Network network) {
-        String gateway = gatewayFor(network);
-        if (DEFAULT_HOST.equals(gateway)) return true;
         try {
             WifiManager wm = (WifiManager) activity.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
             String ssid = wm != null && wm.getConnectionInfo() != null ? wm.getConnectionInfo().getSSID() : "";
             if (ssid != null && ssid.toUpperCase().contains("EP6")) return true;
         } catch (Exception ignored) {}
-        return false;
+        NetworkCapabilities caps = connectivity == null ? null : connectivity.getNetworkCapabilities(network);
+        boolean validatedInternet = caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED);
+        return !validatedInternet && DEFAULT_HOST.equals(gatewayFor(network));
     }
 
     private String gatewayFor(Network network) {
