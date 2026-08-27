@@ -10,8 +10,8 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 26
-        versionName = "26.0"
+        versionCode = 27
+        versionName = "27.0-ordro"
     }
 
     buildTypes {
@@ -24,4 +24,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+}
+
+dependencies {
+    implementation("androidx.media3:media3-exoplayer:1.9.3")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.9.3")
 }
