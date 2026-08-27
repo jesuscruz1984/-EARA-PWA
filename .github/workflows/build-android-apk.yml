@@ -63,15 +63,25 @@ jobs:
           adb logcat -c
           adb shell am force-stop com.eara.ai || true
           adb shell monkey -p com.eara.ai -c android.intent.category.LAUNCHER 1
-          sleep 12
+          sleep 15
+
           echo "=== Agent process ==="
           PID="$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
           echo "PID=$PID"
+
           echo "=== Foreground activity ==="
-          adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity|com\.eara\.ai" | head -40 || true
+          ACTIVITY_DUMP="$(adb shell dumpsys activity activities)"
+          echo "$ACTIVITY_DUMP" | grep -E "topResumedActivity|mResumedActivity|startingWindow|com\.eara\.ai" | head -60 || true
+
+          echo "=== Visible UI ==="
+          adb shell uiautomator dump /sdcard/agent-window.xml >/dev/null 2>&1 || true
+          adb shell cat /sdcard/agent-window.xml 2>/dev/null | head -c 12000 || true
+          echo
+
           echo "=== Crash scan ==="
-          adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E '*:S' > /tmp/agent-crash.log || true
+          adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E Agent10:E '*:S' > /tmp/agent-crash.log || true
           cat /tmp/agent-crash.log || true
+
           if [ -z "$PID" ]; then
             echo "Agent 1.0 process is not alive after launch."
             exit 1
@@ -80,7 +90,16 @@ jobs:
             echo "Agent 1.0 crashed during startup."
             exit 1
           fi
-          echo "AGENT_LAUNCH_SMOKE_TEST=PASS"
+          if echo "$ACTIVITY_DUMP" | grep -qE "startingWindow=.*Splash Screen com\.eara\.ai"; then
+            echo "Agent 1.0 never completed its first draw; Android splash is still active."
+            exit 1
+          fi
+          if ! echo "$ACTIVITY_DUMP" | grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity"; then
+            echo "Agent 1.0 MainActivity is not the resumed foreground activity."
+            exit 1
+          fi
+
+          echo "AGENT_REAL_LAUNCH_TEST=PASS"
           EOF
           chmod +x /tmp/agent-launch-test.sh
 
@@ -95,15 +114,15 @@ jobs:
 
       - name: Prepare named APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v28.apk
-          sha256sum Agent-1.0-ORDRO-EP6-v28.apk > Agent-1.0-ORDRO-EP6-v28.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v29.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v29.apk > Agent-1.0-ORDRO-EP6-v29.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v28-apk
+          name: Agent-1.0-ORDRO-EP6-v29-apk
           path: |
-            Agent-1.0-ORDRO-EP6-v28.apk
-            Agent-1.0-ORDRO-EP6-v28.apk.sha256
+            Agent-1.0-ORDRO-EP6-v29.apk
+            Agent-1.0-ORDRO-EP6-v29.apk.sha256
           if-no-files-found: error
           retention-days: 30
