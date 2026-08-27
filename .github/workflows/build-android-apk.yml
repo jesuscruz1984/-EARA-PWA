@@ -51,6 +51,39 @@ jobs:
         working-directory: android-app
         run: gradle --no-daemon :app:assembleDebug
 
+      - name: Prepare launch smoke test
+        run: |
+          cat > /tmp/agent-launch-test.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -eu
+          APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          echo "Installing $APK"
+          test -s "$APK"
+          adb install -r "$APK"
+          adb logcat -c
+          adb shell am force-stop com.eara.ai || true
+          adb shell monkey -p com.eara.ai -c android.intent.category.LAUNCHER 1
+          sleep 12
+          echo "=== Agent process ==="
+          PID="$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+          echo "PID=$PID"
+          echo "=== Foreground activity ==="
+          adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity|com\.eara\.ai" | head -40 || true
+          echo "=== Crash scan ==="
+          adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E '*:S' > /tmp/agent-crash.log || true
+          cat /tmp/agent-crash.log || true
+          if [ -z "$PID" ]; then
+            echo "Agent 1.0 process is not alive after launch."
+            exit 1
+          fi
+          if grep -E "FATAL EXCEPTION|Process: com\.eara\.ai" /tmp/agent-crash.log; then
+            echo "Agent 1.0 crashed during startup."
+            exit 1
+          fi
+          echo "AGENT_LAUNCH_SMOKE_TEST=PASS"
+          EOF
+          chmod +x /tmp/agent-launch-test.sh
+
       - name: Install and launch APK in Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -58,30 +91,7 @@ jobs:
           arch: x86_64
           profile: pixel_6
           disable-animations: true
-          script: |
-            set -eu
-            APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
-            adb install -r "$APK"
-            adb logcat -c
-            adb shell am force-stop com.eara.ai || true
-            adb shell monkey -p com.eara.ai -c android.intent.category.LAUNCHER 1
-            sleep 10
-            echo "=== Agent process ==="
-            PID="$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
-            echo "PID=$PID"
-            echo "=== Foreground activity ==="
-            adb shell dumpsys activity activities | grep -E "mResumedActivity|topResumedActivity|com\.eara\.ai" | head -40 || true
-            echo "=== Crash scan ==="
-            adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E '*:S' > /tmp/agent-crash.log || true
-            cat /tmp/agent-crash.log || true
-            if [ -z "$PID" ]; then
-              echo "Agent 1.0 process is not alive after launch."
-              exit 1
-            fi
-            if grep -E "FATAL EXCEPTION|Process: com\.eara\.ai" /tmp/agent-crash.log; then
-              echo "Agent 1.0 crashed during startup."
-              exit 1
-            fi
+          script: bash /tmp/agent-launch-test.sh
 
       - name: Prepare named APK
         run: |
