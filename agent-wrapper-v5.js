@@ -17,7 +17,9 @@ function safeError(e){
 }
 async function imageResponse(env,body){
   const prompt=String(body?.text||'').trim().slice(0,2048);
-  const result=await env.AI.run(FLUX,{prompt,steps:6,seed:Math.floor(Math.random()*2147483646)+1});
+  // Production Workers AI currently accepts prompt/steps here but rejects seed in
+  // this account's live inference schema, so keep the request deliberately minimal.
+  const result=await env.AI.run(FLUX,{prompt,steps:6});
   if(!result?.image)throw new Error('Image model returned no image');
   const image=`data:image/jpeg;base64,${result.image}`;
   return {
