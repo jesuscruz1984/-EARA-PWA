@@ -1,0 +1,34 @@
+name: Image Backend Diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/image-model-debug.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Test direct image request and print sanitized response
+        run: |
+          set +e
+          code=$(curl -sS --max-time 35 -o /tmp/image.json -w '%{http_code}' \
+            -X POST 'https://eara-pwa.jesuscruz1984.workers.dev/agent-chat' \
+            -H 'Origin: https://jesuscruz1984.github.io' \
+            -H 'Content-Type: application/json' \
+            --data '{"text":"Create an image of a friendly dog on a plain background","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true}')
+          echo "HTTP=$code"
+          node - <<'NODE'
+          const fs=require('fs');
+          try {
+            const j=JSON.parse(fs.readFileSync('/tmp/image.json','utf8'));
+            console.log(JSON.stringify({route:j.route,model:j.model,imageError:j.imageError,text:j.text,imageCount:(j.images||[]).length,imageLength:(j.images||[])[0]?.length||0},null,2));
+          } catch(e) { console.log('INVALID_RESPONSE'); }
+          NODE
+          exit 0
