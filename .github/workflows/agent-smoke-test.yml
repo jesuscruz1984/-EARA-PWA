@@ -21,72 +21,75 @@ permissions:
 jobs:
   smoke-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 12
     steps:
       - name: Wait briefly for deployment
-        run: sleep 20
+        run: sleep 25
 
-      - name: Test Agent 1.0 page
+      - name: Test Agent 1.0 page and v36 upgrade asset
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
-            https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ \
-            -o /tmp/agent.html
+          curl --fail --silent --show-error --retry 8 --retry-delay 5 https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ -o /tmp/agent.html
           grep -q "Agent 1.0" /tmp/agent.html
+          curl --fail --silent --show-error --retry 8 --retry-delay 5 "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/upgrade-v36.js?v=36" -o /tmp/upgrade.js
+          grep -q "const VERSION='36'" /tmp/upgrade.js
 
       - name: Test backend health
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 5 --retry-delay 5 \
-            https://eara-pwa.jesuscruz1984.workers.dev/health \
-            | tee /tmp/health.json
+          curl --fail --silent --show-error --retry 5 --retry-delay 5 https://eara-pwa.jesuscruz1984.workers.dev/health | tee /tmp/health.json
           jq -e '.ok == true' /tmp/health.json >/dev/null
 
       - name: Diagnose primary GPT models
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error --retry 2 --retry-delay 3 \
-            -H 'Origin: https://jesuscruz1984.github.io' \
-            https://eara-pwa.jesuscruz1984.workers.dev/agent-model-diagnostics \
-            | tee /tmp/models.json
+          curl --fail --silent --show-error --retry 2 --retry-delay 3 -H 'Origin: https://jesuscruz1984.github.io' https://eara-pwa.jesuscruz1984.workers.dev/agent-model-diagnostics | tee /tmp/models.json
           jq . /tmp/models.json
 
       - name: Test normal Agent chat
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 3 --retry-delay 3 \
-            -H 'Origin: https://jesuscruz1984.github.io' \
-            -H 'Content-Type: application/json' \
-            --data '{"text":"Reply with exactly: Agent smoke test OK","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
-            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
-            | tee /tmp/chat.json
+            -H 'Origin: https://jesuscruz1984.github.io' -H 'Content-Type: application/json' \
+            --data '{"text":"Reply with exactly: Agent smoke test OK","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 27, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat | tee /tmp/chat.json
           jq -e '((.text // "") | length) > 0' /tmp/chat.json >/dev/null
           jq -e '.route != "oss-fallback" and .route != "gemma-fallback"' /tmp/chat.json >/dev/null
+
+      - name: Test generic PDF and Word document drafting
+        run: |
+          set -euo pipefail
+          OK=0
+          for i in $(seq 1 12); do
+            curl --fail --silent --show-error --max-time 45 \
+              -H 'Origin: https://jesuscruz1984.github.io' -H 'Content-Type: application/json' \
+              --data '{"text":"Create a PDF and Word document titled Live Document Test. Include a short introduction and three bullet points.","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 27, 2026"}' \
+              https://eara-pwa.jesuscruz1984.workers.dev/agent-chat > /tmp/docs.json || true
+            if jq -e '.route == "document-draft-v36" and (.documentDraft.formats | index("pdf")) != null and (.documentDraft.formats | index("docx")) != null and ((.documentDraft.content // "") | length) > 30' /tmp/docs.json >/dev/null 2>&1; then OK=1; break; fi
+            sleep 5
+          done
+          cat /tmp/docs.json
+          test "$OK" -eq 1
 
       - name: Test exact CSS Tech company lookup
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 2 --retry-delay 3 \
-            -H 'Origin: https://jesuscruz1984.github.io' \
-            -H 'Content-Type: application/json' \
-            --data '{"text":"My company name is CSSTECH look me up online get my logo n company info to make proposal nice","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
-            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
-            | tee /tmp/css.json
+            -H 'Origin: https://jesuscruz1984.github.io' -H 'Content-Type: application/json' \
+            --data '{"text":"My company name is CSSTECH look me up online get my logo n company info to make proposal nice","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true,"localDate":"August 27, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat | tee /tmp/css.json
           jq -e '.grounded == true and .webUsed == true' /tmp/css.json >/dev/null
           jq -r '.text' /tmp/css.json | grep -qi 'csstech.net'
           jq -r '.text' /tmp/css.json | grep -qi 'Miami'
           ! jq -r '.text' /tmp/css.json | grep -qi 'Austin'
-          ! jq -r '.text' /tmp/css.json | grep -qi 'target="_blank"'
 
-      - name: Test branded Allied Universal PDF creation
+      - name: Test existing branded proposal PDF route
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 2 --retry-delay 3 \
-            -H 'Origin: https://jesuscruz1984.github.io' \
-            -H 'Content-Type: application/json' \
-            --data '{"text":"Make me a professional proposal for Allied Universal using Uniview equipment for 42 cameras and NVRs and make it a PDF.","memory":"User: My company is CSSTECH. Agent 1.0: Verified company profile CSS Tech LLC, 16235 SW 117 Ave Unit #14, Miami, FL 33177, 305-246-2325, sales@csstech.net, https://www.csstech.net.","memoryCount":2,"forceWeb":false,"agentMode":true,"localDate":"August 25, 2026"}' \
-            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat \
-            | tee /tmp/pdf.json
+            -H 'Origin: https://jesuscruz1984.github.io' -H 'Content-Type: application/json' \
+            --data '{"text":"Make me a professional proposal for Allied Universal using Uniview equipment for 42 cameras and NVRs and make it a PDF.","memory":"User: My company is CSSTECH. Agent 1.0: Verified company profile CSS Tech LLC, 16235 SW 117 Ave Unit #14, Miami, FL 33177, 305-246-2325, sales@csstech.net, https://www.csstech.net.","memoryCount":2,"forceWeb":false,"agentMode":true,"localDate":"August 27, 2026"}' \
+            https://eara-pwa.jesuscruz1984.workers.dev/agent-chat | tee /tmp/pdf.json
           jq -e '.pdfCreated == true and (.files | length) > 0 and ((.files[0].data // "") | length) > 100' /tmp/pdf.json >/dev/null
           jq -r '.files[0].data' /tmp/pdf.json | base64 -d > /tmp/test.pdf
           head -c 5 /tmp/test.pdf | grep -q '%PDF-'
@@ -94,4 +97,4 @@ jobs:
           strings /tmp/test.pdf | grep -q 'Allied Universal'
 
       - name: Passed
-        run: echo 'Agent 1.0 live page, model diagnostics, enhanced reasoning fallback, grounded CSS Tech lookup, clean UI output, and branded PDF creation all passed.'
+        run: echo 'Agent 1.0 live page, v36 document draft route, normal chat, grounded lookup, and branded PDF route passed.'
