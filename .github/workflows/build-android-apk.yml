@@ -65,7 +65,7 @@ jobs:
           test -s "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "package: name='com.eara.ai'" "$GITHUB_WORKSPACE/apk-badging.txt"
-          grep -q "versionCode='34'" "$GITHUB_WORKSPACE/apk-badging.txt"
+          grep -q "versionCode='35'" "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "launchable-activity: name='com.eara.ai.MainActivity'" "$GITHUB_WORKSPACE/apk-badging.txt"
 
       - name: Boot same Android 15 x86_64 Pixel 6 simulator directly and test APK
@@ -81,12 +81,18 @@ jobs:
           WINDOW_LOG="$GITHUB_WORKSPACE/agent-launch-window.txt"
           PACKAGE_LOG="$GITHUB_WORKSPACE/agent-installed-package.txt"
           AVD_NAME="eara_pixel6_api35"
+          export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
 
           echo "=== Create exact simulator ==="
           echo no | avdmanager create avd --force \
             --name "$AVD_NAME" \
             --package "system-images;android-35;default;x86_64" \
             --device "pixel_6"
+
+          echo "=== Verify exact simulator exists ==="
+          "$ANDROID_HOME/emulator/emulator" -list-avds | tee "$GITHUB_WORKSPACE/emulator-avds.txt"
+          grep -qx "$AVD_NAME" "$GITHUB_WORKSPACE/emulator-avds.txt"
 
           ACCEL="off"
           if [ -e /dev/kvm ]; then
@@ -134,8 +140,6 @@ jobs:
           test "$BOOT_OK" -eq 1
           echo "ANDROID_15_PIXEL6_BOOT=PASS"
 
-          # Software-emulated Android can report boot_complete before all framework
-          # services are stable. Wait and prove ADB works repeatedly before install.
           sleep 25
           STABLE=0
           for i in $(seq 1 20); do
@@ -169,7 +173,7 @@ jobs:
           echo "APK_INSTALL=PASS"
 
           adb shell dumpsys package com.eara.ai > "$PACKAGE_LOG"
-          grep -q "versionCode=34" "$PACKAGE_LOG"
+          grep -q "versionCode=35" "$PACKAGE_LOG"
           echo "PACKAGE_VERSION=PASS"
 
           adb logcat -c || true
@@ -190,7 +194,6 @@ jobs:
           test "$LAUNCH_OK" -eq 1
           echo "MAIN_ACTIVITY_START=PASS"
 
-          # Give the real app time to initialize WebView and optional camera/speech bridges.
           sleep 30
 
           echo "=== Verify Agent process remains alive ==="
@@ -224,21 +227,20 @@ jobs:
             exit 1
           fi
           echo "NO_AGENT_FATAL_CRASH=PASS"
-
           echo "AGENT_REAL_LAUNCH_TEST=PASS"
 
-      - name: Prepare verified v34 APK
+      - name: Prepare verified v35 APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v34.apk
-          sha256sum Agent-1.0-ORDRO-EP6-v34.apk > Agent-1.0-ORDRO-EP6-v34.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v35.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v35.apk > Agent-1.0-ORDRO-EP6-v35.apk.sha256
 
-      - name: Upload verified v34 APK and test evidence
+      - name: Upload verified v35 APK and test evidence
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v34-verified
+          name: Agent-1.0-ORDRO-EP6-v35-verified
           path: |
-            Agent-1.0-ORDRO-EP6-v34.apk
-            Agent-1.0-ORDRO-EP6-v34.apk.sha256
+            Agent-1.0-ORDRO-EP6-v35.apk
+            Agent-1.0-ORDRO-EP6-v35.apk.sha256
             agent-launch.png
             agent-launch-ui.xml
             agent-launch-logcat.txt
@@ -248,6 +250,7 @@ jobs:
             apk-badging.txt
             emulator.log
             emulator-accel.txt
+            emulator-avds.txt
           if-no-files-found: warn
           retention-days: 30
 
@@ -255,7 +258,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-v34-failure-diagnostics
+          name: Agent-1.0-v35-failure-diagnostics
           path: |
             agent-launch.png
             agent-launch-ui.xml
@@ -266,5 +269,6 @@ jobs:
             apk-badging.txt
             emulator.log
             emulator-accel.txt
+            emulator-avds.txt
           if-no-files-found: warn
           retention-days: 7
