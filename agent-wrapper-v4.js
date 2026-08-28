@@ -53,16 +53,46 @@ async function improveChat(env,body,prior){
     return {...prior,text:rr.text,speech:speech(rr.text),model:rr.model,route:'enhanced-backup',agentFallback:true,enhancedBackup:true};
   }catch(_){return prior}
 }
+function requestedDocumentFormats(text){
+  const t=String(text||''),formats=[];
+  if(/\bpdf\b|portable document format/i.test(t))formats.push('pdf');
+  if(/\bdocx\b|\bword\s+(?:file|document)\b|microsoft\s+word/i.test(t))formats.push('docx');
+  return [...new Set(formats)];
+}
+function documentCreationRequest(text){
+  const t=String(text||'');const formats=requestedDocumentFormats(t);
+  return formats.length>0&&/\b(create|make|generate|export|save|turn|convert|prepare|build)\b/i.test(t);
+}
+function keepLegacyBrandedProposal(text){return /\bproposal\b/i.test(String(text||''))&&/\bpdf\b/i.test(String(text||''))}
+function documentTitle(text){
+  const t=String(text||'').replace(/\b(create|make|generate|export|save|turn|convert|prepare|build|me|a|an|the|pdf|docx|word|file|document|into|as|please)\b/gi,' ').replace(/\s+/g,' ').trim();
+  return (t||'Agent Document').replace(/[^A-Za-z0-9._ -]+/g,' ').trim().slice(0,72)||'Agent Document';
+}
+async function createDocumentDraft(env,body){
+  const formats=requestedDocumentFormats(body?.text),memory=String(body?.memory||'').slice(-18000);
+  const system='You are Agent 1.0 creating the CONTENT for a downloadable document. Produce polished, complete document content that directly satisfies the request. Use the conversation context when relevant. Preserve concrete names, dates, prices, quantities and requirements supplied by the user. Use clear plain-text headings and bullet lines. Do not say you created or attached a file. Do not output HTML, JSON, hidden reasoning, or markdown links. Do not invent current facts.';
+  const user=[memory?`RECENT CONVERSATION:\n${memory}`:'',`DOCUMENT REQUEST:\n${body?.text||''}`].filter(Boolean).join('\n\n');
+  const rr=await runHosted(env,system,user,2200);const title=documentTitle(body?.text);
+  const names=formats.map(x=>x==='pdf'?'PDF':'Word document');
+  return {text:`Done — I prepared the ${names.join(' and ')}.`,speech:`Done. I prepared the ${names.join(' and ')}.`,model:rr.model,route:'document-draft-v36',toolsUsed:formats.map(x=>x==='docx'?'word':'pdf'),documentDraft:{title,content:rr.text,formats,responseText:`Done — I created the ${names.join(' and ')} for you.`}};
+}
 export default{
   async fetch(request,env,ctx){
     const u=new URL(request.url);if(u.pathname!='/agent-chat'||request.method!=='POST')return app.fetch(request,env,ctx);
     let body=null;try{body=await request.clone().json()}catch(_){return app.fetch(request,env,ctx)}
+    const origin=request.headers.get('Origin')||'';
+    if(documentCreationRequest(body?.text)&&!keepLegacyBrandedProposal(body?.text)){
+      try{
+        const data=await createDocumentDraft(env,body);
+        return new Response(JSON.stringify(data),{status:200,headers:cors(origin)});
+      }catch(_){/* fall through to normal Agent route */}
+    }
     const response=await app.fetch(new Request(request.url,{method:'POST',headers:request.headers,body:JSON.stringify(body)}),env,ctx);
     if(!response.ok||!/application\/json/i.test(response.headers.get('Content-Type')||''))return response;
     let data;try{data=await response.json()}catch(_){return response}
-    if(data?.pdfCreated)return new Response(JSON.stringify(data),{status:response.status,headers:cors(request.headers.get('Origin')||'',response.headers)});
+    if(data?.pdfCreated)return new Response(JSON.stringify(data),{status:response.status,headers:cors(origin,response.headers)});
     if(data?.route==='grounded-web-fallback')data=await improveWeb(env,body,data);
     else if(data?.agentFallback&&!isWeb(body?.text,body?.forceWeb))data=await improveChat(env,body,data);
-    return new Response(JSON.stringify(data),{status:response.status,headers:cors(request.headers.get('Origin')||'',response.headers)});
+    return new Response(JSON.stringify(data),{status:response.status,headers:cors(origin,response.headers)});
   }
 };
