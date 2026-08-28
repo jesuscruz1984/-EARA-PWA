@@ -180,7 +180,10 @@ network_methods = r'''
 
     private void dispatchNetworkEvent() {
         String json = networkStatusJson();
-        evaluateJs("window.dispatchEvent(new CustomEvent('eara-native-network',{detail:" + json + "}));");
+        String script = "window.dispatchEvent(new CustomEvent('eara-native-network',{detail:" + json + "}));";
+        runOnUiThread(() -> {
+            if (webView != null) webView.evaluateJavascript(script, null);
+        });
     }
 
 '''
