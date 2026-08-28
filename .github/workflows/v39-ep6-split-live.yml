@@ -226,7 +226,7 @@ jobs:
           end=time.time()+60
           while time.time()<end:
             try:
-              ready=ev("document.readyState==='complete' && typeof EARANative==='object' && document.querySelector('#liveTalkBtn') && document.querySelector('#liveCameraBtn') && document.querySelector('#phoneCameraBtn')")
+              ready=ev("document.readyState==='complete' && typeof EARANative==='object' && !!document.querySelector('#liveTalkBtn') && !!document.querySelector('#liveCameraBtn') && !!document.querySelector('#phoneCameraBtn')")
               if ready: break
             except Exception: pass
             time.sleep(1)
