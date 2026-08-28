@@ -1,4 +1,4 @@
-// EARA v42 field-visit memory: avoid competing with Android native hands-free audio.
+// EARA v43 field-visit memory: share the held WebView microphone safely.
 (()=>{
   const SESSION_KEY='earaVisitSessionsV1';
   const MEMKEY='earaMemoryV2';
@@ -97,6 +97,7 @@
     clearTimers();active=false;stopping=false;
     if(current){current.active=false;current.updatedAt=Date.now();current.pausedReason='android-native-hands-free';persistSession()}
     updateUi();renderVisitPanel();state('Listening for “Eara” — Android microphone ready.');badge('Eara Ready');chip('SMART AI');
+    window.dispatchEvent(new CustomEvent('eara-visit-stopped'));
     setTimeout(()=>window.forceEaraListening?.(),80);
   }
   function beginChunk(){
@@ -139,7 +140,7 @@
     }
     const existing=nowSession();
     current=existing||{id:'visit-'+Date.now(),active:true,startedAt:Date.now(),updatedAt:Date.now(),transcript:'',summary:'',audioSegments:0,audioBytes:0,transcribedSegments:0,transcriptionErrors:0,nextSeq:1};
-    current.active=true;active=true;stopping=false;persistSession();updateUi();renderVisitPanel();state('Visit Memory ON — audio is being saved and transcribed.');badge('Recording Visit');chip('VISIT RECORDING');beginChunk();
+    current.active=true;active=true;stopping=false;persistSession();window.dispatchEvent(new CustomEvent('eara-visit-started'));updateUi();renderVisitPanel();state('Visit Memory ON — audio is being saved and transcribed.');badge('Recording Visit');chip('VISIT RECORDING');beginChunk();
   }
 
   async function retryMissingTranscripts(session){
@@ -196,7 +197,7 @@
     await pending;
     current=getSession(current.id)||current;current.active=false;current.endedAt=Date.now();current.updatedAt=Date.now();persistSession();updateUi();renderVisitPanel();
     await analyzeVisit(current,false);
-    stopping=false;
+    stopping=false;window.dispatchEvent(new CustomEvent('eara-visit-stopped'));
   }
 
   function sessionForRecall(){const s=active&&current?current:latestSession();if(!s)return null;if(active)return s;const end=s.endedAt||s.updatedAt||s.startedAt;return Date.now()-end<RECENT_MS?s:null}
@@ -283,7 +284,7 @@
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){installUi();wrapAsk();if(active&&!recorder)beginChunk()}else if(active)state('Visit Memory may pause while EARA is in the background.')});
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.tab==='memory')setTimeout(renderVisitPanel,50)}));
 
-  const resume=nowSession();if(resume){current=resume;if(nativeHandsFreeOwnsMic())pauseNativeVisit();else active=true}
+  const resume=nowSession();if(resume){current=resume;active=true}
   setTimeout(()=>{installUi();wrapAsk();if(active)beginChunk()},120);
 })();
 
