@@ -10,8 +10,8 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 33
-        versionName = "33.0-eara-same-emulator"
+        versionCode = 34
+        versionName = "34.0-eara-direct-pixel6-test"
     }
 
     buildTypes {
