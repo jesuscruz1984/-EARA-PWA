@@ -10,8 +10,8 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 41
-        versionName = "41.0-quiet-listener"
+        versionCode = 42
+        versionName = "42.0-mic-owner-fix"
     }
 
     buildTypes {
