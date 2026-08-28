@@ -28,6 +28,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
 
+      - name: Verify ARM64 runner
+        run: |
+          echo "Runner architecture: $(uname -m)"
+          test "$(uname -m)" = "arm64"
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
@@ -37,9 +42,17 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK 36
+      - name: Install build SDK and verified ARM emulator image
         run: |
-          sdkmanager "platforms;android-36" "build-tools;36.0.0"
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-30" \
+            "system-images;android-30;google_apis;arm64-v8a"
+          sdkmanager --list | grep -F "system-images;android-30;google_apis;arm64-v8a"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -55,47 +68,71 @@ jobs:
         run: |
           cat > /tmp/agent-launch-test.sh <<'EOF'
           #!/usr/bin/env bash
-          set -eu
+          set -euo pipefail
+
           APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          UI_XML="$GITHUB_WORKSPACE/agent-launch-ui.xml"
+          SCREENSHOT="$GITHUB_WORKSPACE/agent-launch.png"
+          CRASH_LOG="$GITHUB_WORKSPACE/agent-launch-logcat.txt"
+
           echo "Installing $APK"
           test -s "$APK"
           adb install -r "$APK"
           adb logcat -c
           adb shell am force-stop com.eara.ai || true
-          adb shell monkey -p com.eara.ai -c android.intent.category.LAUNCHER 1
-          sleep 15
+
+          echo "Launching MainActivity directly"
+          LAUNCH_OUTPUT="$(adb shell am start -W -n com.eara.ai/.MainActivity)"
+          echo "$LAUNCH_OUTPUT"
+          echo "$LAUNCH_OUTPUT" | grep -q "Status: ok"
+
+          sleep 12
 
           echo "=== Agent process ==="
           PID="$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
           echo "PID=$PID"
+          test -n "$PID"
 
           echo "=== Foreground activity ==="
           ACTIVITY_DUMP="$(adb shell dumpsys activity activities)"
-          echo "$ACTIVITY_DUMP" | grep -E "topResumedActivity|mResumedActivity|startingWindow|com\.eara\.ai" | head -60 || true
+          echo "$ACTIVITY_DUMP" | grep -E "topResumedActivity|mResumedActivity|startingWindow|com\.eara\.ai" | head -80 || true
+
+          if echo "$ACTIVITY_DUMP" | grep -qE "startingWindow=.*Splash Screen com\.eara\.ai"; then
+            echo "Agent 1.0 is still stuck on the Android splash screen."
+            exit 1
+          fi
+
+          if ! echo "$ACTIVITY_DUMP" | grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity|mResumedActivity:.*com\.eara\.ai/.MainActivity"; then
+            echo "Agent 1.0 MainActivity is not the resumed foreground activity."
+            exit 1
+          fi
 
           echo "=== Visible UI ==="
-          adb shell uiautomator dump /sdcard/agent-window.xml >/dev/null 2>&1 || true
-          adb shell cat /sdcard/agent-window.xml 2>/dev/null | head -c 12000 || true
+          adb shell uiautomator dump /sdcard/agent-window.xml >/dev/null
+          adb pull /sdcard/agent-window.xml "$UI_XML" >/dev/null
+          cat "$UI_XML" | head -c 16000 || true
           echo
 
-          echo "=== Crash scan ==="
-          adb logcat -d -v brief AndroidRuntime:E ActivityTaskManager:E chromium:E Agent10:E '*:S' > /tmp/agent-crash.log || true
-          cat /tmp/agent-crash.log || true
+          if grep -Eq "Starting…|Opening…|Could not load|could not start" "$UI_XML"; then
+            echo "Agent 1.0 never reached the loaded web app UI."
+            exit 1
+          fi
 
-          if [ -z "$PID" ]; then
-            echo "Agent 1.0 process is not alive after launch."
+          if ! grep -q "Agent 1.0" "$UI_XML"; then
+            echo "Expected Agent 1.0 UI text is not visible."
             exit 1
           fi
-          if grep -E "FATAL EXCEPTION|Process: com\.eara\.ai" /tmp/agent-crash.log; then
-            echo "Agent 1.0 crashed during startup."
-            exit 1
-          fi
-          if echo "$ACTIVITY_DUMP" | grep -qE "startingWindow=.*Splash Screen com\.eara\.ai"; then
-            echo "Agent 1.0 never completed its first draw; Android splash is still active."
-            exit 1
-          fi
-          if ! echo "$ACTIVITY_DUMP" | grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity"; then
-            echo "Agent 1.0 MainActivity is not the resumed foreground activity."
+
+          echo "=== Screenshot ==="
+          adb exec-out screencap -p > "$SCREENSHOT"
+          test -s "$SCREENSHOT"
+          ls -lh "$SCREENSHOT"
+
+          echo "=== Crash scan ==="
+          adb logcat -d -v time > "$CRASH_LOG" || true
+          if adb logcat -d -v brief AndroidRuntime:E '*:S' | grep -q "FATAL EXCEPTION"; then
+            echo "Agent 1.0 hit a fatal Java exception during startup."
+            adb logcat -d -v brief AndroidRuntime:E '*:S' || true
             exit 1
           fi
 
@@ -106,23 +143,30 @@ jobs:
       - name: Install and launch APK in Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 35
+          api-level: 30
+          target: google_apis
           arch: arm64-v8a
-          profile: pixel_6
-          disable-animations: false
+          profile: pixel_5
+          force-avd-creation: true
+          emulator-boot-timeout: 600
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none -camera-front none
           script: bash /tmp/agent-launch-test.sh
 
       - name: Prepare named APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v30.apk
-          shasum -a 256 Agent-1.0-ORDRO-EP6-v30.apk > Agent-1.0-ORDRO-EP6-v30.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v31.apk
+          shasum -a 256 Agent-1.0-ORDRO-EP6-v31.apk > Agent-1.0-ORDRO-EP6-v31.apk.sha256
 
-      - name: Upload APK
+      - name: Upload verified APK and launch evidence
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v30-apk
+          name: Agent-1.0-ORDRO-EP6-v31-verified
           path: |
-            Agent-1.0-ORDRO-EP6-v30.apk
-            Agent-1.0-ORDRO-EP6-v30.apk.sha256
+            Agent-1.0-ORDRO-EP6-v31.apk
+            Agent-1.0-ORDRO-EP6-v31.apk.sha256
+            agent-launch.png
+            agent-launch-ui.xml
+            agent-launch-logcat.txt
           if-no-files-found: error
           retention-days: 30
