@@ -10,8 +10,8 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 31
-        versionName = "31.0-runtimeverified"
+        versionCode = 32
+        versionName = "32.0-linux-kvm-verified"
     }
 
     buildTypes {
