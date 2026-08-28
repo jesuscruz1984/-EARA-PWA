@@ -107,22 +107,22 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 35
-          arch: x86_64
+          arch: arm64-v8a
           profile: pixel_6
           disable-animations: false
           script: bash /tmp/agent-launch-test.sh
 
       - name: Prepare named APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v29.apk
-          shasum -a 256 Agent-1.0-ORDRO-EP6-v29.apk > Agent-1.0-ORDRO-EP6-v29.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v30.apk
+          shasum -a 256 Agent-1.0-ORDRO-EP6-v30.apk > Agent-1.0-ORDRO-EP6-v30.apk.sha256
 
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v29-apk
+          name: Agent-1.0-ORDRO-EP6-v30-apk
           path: |
-            Agent-1.0-ORDRO-EP6-v29.apk
-            Agent-1.0-ORDRO-EP6-v29.apk.sha256
+            Agent-1.0-ORDRO-EP6-v30.apk
+            Agent-1.0-ORDRO-EP6-v30.apk.sha256
           if-no-files-found: error
           retention-days: 30
