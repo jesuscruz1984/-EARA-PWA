@@ -31,7 +31,7 @@ import java.util.Arrays;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/?apk=41";
+    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/?apk=42";
     private static final String APP_HOST = "jesuscruz1984.github.io";
     private static final int PERMISSION_REQUEST = 4201;
 
@@ -73,7 +73,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " EARA-Android/41 Quiet-Listener");
+        settings.setUserAgentString(settings.getUserAgentString() + " EARA-Android/42 Mic-Owner-Fix");
 
         webView.addJavascriptInterface(new EaraNativeBridge(), "EARANative");
         webView.setWebViewClient(new WebViewClient() {
@@ -251,6 +251,15 @@ public class MainActivity extends Activity {
                 suppressRecognizerAudio();
                 try {
                     speechRecognizer.startListening(speechIntent);
+                    mainHandler.postDelayed(() -> {
+                        if (requestToken != speechRequestToken || !nativeStarting) return;
+                        nativeStarting = false;
+                        nativeListening = false;
+                        try { speechRecognizer.cancel(); } catch (Exception ignored) {}
+                        restoreRecognizerAudio();
+                        dispatchNativeEvent("error", "", false, "audio-capture");
+                        dispatchNativeEvent("end", "", true, "");
+                    }, 5000L);
                 } catch (Exception ex) {
                     nativeStarting = false;
                     nativeListening = false;
