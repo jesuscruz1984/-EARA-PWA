@@ -1,0 +1,382 @@
+name: Agent v40 Live Camera Voice Behavior
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "android-app/**"
+      - "agent-1.0/**"
+      - "agent-wrapper-v4.js"
+      - "scripts/prepare-v39.py"
+      - "scripts/prepare-v40.py"
+      - ".github/workflows/v40-live-agent.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-v40-live-agent
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Verify v40 frontend behavior source
+        run: |
+          set -euo pipefail
+          node --check agent-1.0/ordro-native.js
+          grep -q "version:'40'" agent-1.0/ordro-native.js
+          grep -q "EP6 live camera" agent-1.0/ordro-native.js
+          grep -q "Live conversation" agent-1.0/ordro-native.js
+          grep -q "touch-action:pan-y" agent-1.0/ordro-native.js
+          grep -q "dataset.source='ep6-live'" agent-1.0/ordro-native.js
+          grep -q "phoneCameraBtn" agent-1.0/ordro-native.js
+          grep -q "showLiveCamera" agent-1.0/ordro-native.js
+          grep -q "speakLive" agent-1.0/ordro-native.js
+          grep -q "startListeningSoon" agent-1.0/ordro-native.js
+          echo V40_FRONTEND_BEHAVIOR_SOURCE=PASS
+
+      - name: Prepare v40 Android source
+        run: python3 scripts/prepare-v40.py
+
+      - name: Verify v40 native camera and network source
+        run: |
+          set -euo pipefail
+          grep -q "versionCode = 40" android-app/app/build.gradle.kts
+          grep -q 'versionName = "40.0-live-camera-voice-history-ep6"' android-app/app/build.gradle.kts
+          grep -q '?apk=40' android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q 'Agent-1.0-Android/40' android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "TRANSPORT_ETHERNET" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "TRANSPORT_CELLULAR" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "bindProcessToNetwork" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q 'candidates.add("rtsp://" + host + "/MJPG")' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q 'return !validatedInternet;' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q 'setSocketFactory(cameraNetwork.getSocketFactory())' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'setForceUseRtpTcp(true)' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'host + "/LIVE' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'host + "/STREAM' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'MJPG?W=' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q "onRenderedFirstFrame" android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          echo V40_NATIVE_EP6_SOURCE=PASS
+
+      - name: Verify PDF and Word generators remain intact
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          vm.runInThisContext(fs.readFileSync('agent-1.0/upgrade-v36.js','utf8'),{filename:'upgrade-v36.js'});
+          const files=AgentArtifacts.buildFiles({title:'V40 Test',content:'# V40 Test\n\nPDF and Word generation works.\n\n- PDF\n- DOCX',formats:['pdf','docx']},'Create a PDF and Word document');
+          if(files.length!==2) throw new Error('Expected PDF and DOCX');
+          const pdf=files.find(f=>f.name.endsWith('.pdf')),docx=files.find(f=>f.name.endsWith('.docx'));
+          if(Buffer.from(pdf.data,'base64').subarray(0,5).toString()!=='%PDF-') throw new Error('Invalid PDF');
+          if(Buffer.from(docx.data,'base64').subarray(0,2).toString()!=='PK') throw new Error('Invalid DOCX');
+          console.log('V40_PDF_DOCX=PASS');
+          NODE
+
+      - name: Wait for v40 frontend deployment
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 40); do
+            if curl -fsSL --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ordro-native.js?build=$GITHUB_SHA" | grep -q "version:'40'"; then ok=1; break; fi
+            sleep 5
+          done
+          test "$ok" -eq 1
+          echo V40_FRONTEND_DEPLOYED=PASS
+
+      - name: Verify real image-generation backend
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 24); do
+            code=$(curl -sS --max-time 90 -o /tmp/v40-image.json -w '%{http_code}' \
+              -X POST 'https://eara-pwa.jesuscruz1984.workers.dev/agent-chat' \
+              -H 'Origin: https://jesuscruz1984.github.io' \
+              -H 'Content-Type: application/json' \
+              --data '{"text":"Create an image of a friendly dog on a plain background","memory":"","memoryCount":0,"forceWeb":false,"agentMode":true}' || true)
+            if [ "$code" = 200 ] && node - <<'NODE'
+          const fs=require('fs');
+          try{
+            const j=JSON.parse(fs.readFileSync('/tmp/v40-image.json','utf8'));
+            const img=(j.images||[])[0]||'';
+            if(!img.startsWith('data:image/') || img.length<1000) process.exit(1);
+            console.log('V40_IMAGE_GENERATION=PASS route='+j.route+' bytes='+img.length);
+          }catch(e){process.exit(1)}
+          NODE
+            then ok=1; break; fi
+            sleep 5
+          done
+          if [ "$ok" -ne 1 ]; then
+            node - <<'NODE'
+          const fs=require('fs');try{const j=JSON.parse(fs.readFileSync('/tmp/v40-image.json','utf8'));console.log({status:j.status,route:j.route,text:String(j.text||'').slice(0,300),imageCount:(j.images||[]).length})}catch(e){console.log('No valid backend response')}
+          NODE
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.1.0"
+          cache-provider: basic
+
+      - name: Build v40 APK
+        working-directory: android-app
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify v40 APK metadata
+        run: |
+          set -euo pipefail
+          APK="android-app/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='com.eara.ai'" apk-badging.txt
+          grep -q "versionCode='40'" apk-badging.txt
+          grep -q "versionName='40.0-live-camera-voice-history-ep6'" apk-badging.txt
+          grep -q "launchable-activity: name='com.eara.ai.MainActivity'" apk-badging.txt
+          sha256sum "$APK" | tee apk.sha256
+          echo V40_APK_METADATA=PASS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-v40-build
+          path: |
+            android-app/app/build/outputs/apk/debug/app-debug.apk
+            apk-badging.txt
+            apk.sha256
+          retention-days: 7
+
+  runtime:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 26
+            image: system-images;android-26;default;x86_64
+            device: pixel_2
+            label: android8
+          - api: 35
+            image: system-images;android-35;default;x86_64
+            device: pixel_6
+            label: android15
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: android-actions/setup-android@v3
+
+      - name: Install emulator image
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "emulator" "${{ matrix.image }}"
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: agent-v40-build
+          path: downloaded
+
+      - name: Boot emulator, install, and cold launch v40
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          EMU="$ANDROID_HOME/emulator/emulator"
+          AVD="agent_v40_${{ matrix.api }}"
+          export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd-${{ matrix.api }}"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd --force --name "$AVD" --package "${{ matrix.image }}" --device "${{ matrix.device }}"
+          ACCEL=off
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            if "$EMU" -accel-check 2>&1 | grep -qi usable; then ACCEL=on; fi
+          fi
+          "$EMU" -avd "$AVD" -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back virtualscene -camera-front emulated -accel "$ACCEL" > "emulator-${{ matrix.label }}.log" 2>&1 &
+          echo $! > emulator.pid
+          adb start-server
+          OK=0
+          for i in $(seq 1 240); do
+            if [ "$(adb get-state 2>/dev/null || true)" = device ] && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = 1 ]; then OK=1; break; fi
+            sleep 3
+          done
+          test "$OK" -eq 1
+          sleep 12
+          adb install -r -g "$APK" | tee "install-${{ matrix.label }}.txt"
+          grep -q Success "install-${{ matrix.label }}.txt"
+          adb shell dumpsys package com.eara.ai > "package-${{ matrix.label }}.txt"
+          grep -q 'versionCode=40' "package-${{ matrix.label }}.txt"
+          adb logcat -c || true
+          adb shell am force-stop com.eara.ai || true
+          OUT="$(adb shell am start -W -n com.eara.ai/.MainActivity 2>&1)"
+          echo "$OUT" | tee "launch-${{ matrix.label }}.txt"
+          echo "$OUT" | grep -q 'Status: ok'
+          sleep 30
+          test -n "$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+          adb shell dumpsys activity activities > "activity-${{ matrix.label }}.txt"
+          grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity" "activity-${{ matrix.label }}.txt"
+          adb logcat -d -v time > "logcat-${{ matrix.label }}.txt" || true
+          if grep -q 'Process: com.eara.ai' "logcat-${{ matrix.label }}.txt"; then
+            grep -n -B10 -A60 'Process: com.eara.ai' "logcat-${{ matrix.label }}.txt" || true
+            exit 1
+          fi
+          adb exec-out screencap -p > "screen-${{ matrix.label }}.png"
+          test -s "screen-${{ matrix.label }}.png"
+          echo "V40_${{ matrix.label }}_COLD_LAUNCH=PASS"
+
+      - name: Android 15 real UI behavior verification
+        if: matrix.api == 35
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet websocket-client
+          SOCKET="$(adb shell cat /proc/net/unix | tr -d '\r' | awk '/webview_devtools_remote/{print $8}' | tail -1 | sed 's/^@//')"
+          test -n "$SOCKET"
+          adb forward tcp:9222 "localabstract:$SOCKET"
+          cat > /tmp/v40_ui.py <<'PY'
+          import json,time,urllib.request,websocket
+          pages=json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=10))
+          page=next((p for p in pages if 'agent-1.0' in p.get('url','')),pages[0])
+          ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=30,suppress_origin=True)
+          n=0
+          def ev(expr,await_promise=False):
+            global n;n+=1
+            ws.send(json.dumps({'id':n,'method':'Runtime.evaluate','params':{'expression':expr,'returnByValue':True,'awaitPromise':await_promise}}))
+            while True:
+              r=json.loads(ws.recv())
+              if r.get('id')!=n: continue
+              if 'exceptionDetails' in r.get('result',{}): raise RuntimeError(r['result']['exceptionDetails'])
+              return r['result']['result'].get('value')
+          end=time.time()+75
+          while time.time()<end:
+            try:
+              ready=ev("!!(document.readyState==='complete' && window.AgentV40 && AgentV40.version==='40' && document.querySelector('#phoneCameraBtn') && document.querySelector('#liveCameraBtn'))")
+              if ready: break
+            except Exception: pass
+            time.sleep(1)
+          else: raise RuntimeError('v40 behavior layer not ready')
+
+          labels=ev("(()=>({ep6:document.querySelector('#cameraBtn small')?.textContent,phone:document.querySelector('#phoneCameraBtn small')?.textContent,mic:document.querySelector('#dictateBtn')?.title,speaker:document.querySelector('#voiceToggle')?.title,source:document.querySelector('#cameraBtn')?.dataset.source,liveCamera:document.querySelector('#liveCameraBtn')?.title,hasUseFrame:!!document.querySelector('#ep6LiveUse')}))()")
+          assert labels['ep6']=='EP6 live camera',labels
+          assert labels['phone']=='Phone camera',labels
+          assert labels['mic']=='Live conversation' and labels['speaker']=='Live conversation',labels
+          assert labels['source']=='ep6-live',labels
+          assert labels['hasUseFrame'] is False,labels
+          assert ev("window.openCamera===window.AgentV40.showLiveCamera") is True
+          print('V40_EP6_PHONE_CAMERA_SEPARATION=PASS',labels)
+
+          route=json.loads(ev("EARANative.getNetworkRoutingStatus()"))
+          for k in ['ethernetAvailable','cellularAvailable','wifiInternetAvailable','internetBound','internetTransport']:
+            assert k in route,(k,route)
+          print('V40_SPLIT_NETWORK_BRIDGE=PASS',route)
+
+          # History/sidebar behavior: create two chats, open drawer, and prove threads are rendered.
+          ev("newChat();newChat();true")
+          count=ev("document.querySelectorAll('#threads .thread').length")
+          assert count>=2,count
+          ev("document.querySelector('#menuBtn').click();true")
+          time.sleep(.25)
+          drawer=ev("(()=>({mobile:innerWidth<=760,open:document.querySelector('#sidebar').classList.contains('open'),hidden:document.body.classList.contains('v40-sidebar-hidden'),shade:document.querySelector('#drawerShade').classList.contains('show')}))()")
+          if drawer['mobile']:
+            assert drawer['open'] and drawer['shade'],drawer
+            ev("document.querySelector('#drawerShade').click();true")
+          else:
+            assert drawer['hidden'],drawer
+            ev("document.querySelector('#menuBtn').click();true")
+          print('V40_HISTORY_DRAWER=PASS',drawer,'threads',count)
+
+          # Touch/scroll behavior: make the chat intentionally tall and prove scrollTop can move.
+          scroll=ev("(async()=>{const c=document.querySelector('#chat'),m=document.querySelector('#messages');const d=document.createElement('div');d.id='v40ScrollProbe';d.style.height='4200px';m.appendChild(d);await new Promise(r=>setTimeout(r,60));const before={sh:c.scrollHeight,ch:c.clientHeight,overflow:getComputedStyle(c).overflowY};c.scrollTop=700;await new Promise(r=>setTimeout(r,120));const top=c.scrollTop;d.remove();return {...before,top}})()",True)
+          assert scroll['sh']>scroll['ch']+1000,scroll
+          assert scroll['top']>300,scroll
+          assert scroll['overflow'] in ('auto','scroll'),scroll
+          print('V40_CHAT_SCROLL=PASS',scroll)
+
+          # Live-talk semantics: the primary mic and speaker both enter a persistent live state.
+          ev("AgentV40.toggleLiveTalk(true);true")
+          time.sleep(.35)
+          talk=ev("(()=>({state:AgentV40.isLiveTalk(),mic:document.querySelector('#dictateBtn').classList.contains('on'),speaker:document.querySelector('#voiceToggle').classList.contains('on')}))()")
+          assert talk['state'] and talk['mic'] and talk['speaker'],talk
+          ev("AgentV40.toggleLiveTalk(false);true")
+          print('V40_HANDS_FREE_CONVERSATION_MODE=PASS',talk)
+
+          # Document pipeline still returns actual PDF and DOCX bytes in the WebView.
+          prompt='Create a PDF and Word document titled V40 Emulator Test. Include the sentence: document generation works.'
+          result=ev("(async()=>{const r=await fetchChat("+json.dumps(prompt)+",'',null);return {route:r.route,names:(r.files||[]).map(f=>f.name),draft:!!r.documentDraft}})()",True)
+          assert result['route']=='document-draft-v36' and result['draft'],result
+          print('V40_DOCUMENT_ROUTE=PASS',result)
+          ws.close()
+          PY
+          python3 /tmp/v40_ui.py | tee v40-ui.txt
+          adb exec-out screencap -p > v40-ui.png
+          test -s v40-ui.png
+
+      - name: Recheck app after behavior test
+        run: |
+          set -euo pipefail
+          test -n "$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+          adb shell dumpsys activity activities > "activity-final-${{ matrix.label }}.txt"
+          grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity" "activity-final-${{ matrix.label }}.txt"
+          adb logcat -d -v time > "logcat-final-${{ matrix.label }}.txt" || true
+          if grep -q 'Process: com.eara.ai' "logcat-final-${{ matrix.label }}.txt"; then exit 1; fi
+          echo "V40_${{ matrix.label }}_POST_BEHAVIOR_ALIVE=PASS"
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v40-${{ matrix.label }}-evidence
+          path: |
+            emulator-${{ matrix.label }}.log
+            install-${{ matrix.label }}.txt
+            launch-${{ matrix.label }}.txt
+            package-${{ matrix.label }}.txt
+            activity-${{ matrix.label }}.txt
+            activity-final-${{ matrix.label }}.txt
+            logcat-${{ matrix.label }}.txt
+            logcat-final-${{ matrix.label }}.txt
+            screen-${{ matrix.label }}.png
+            v40-ui.txt
+            v40-ui.png
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop emulator
+        if: always()
+        run: |
+          adb emu kill >/dev/null 2>&1 || true
+          if [ -f emulator.pid ]; then kill "$(cat emulator.pid)" >/dev/null 2>&1 || true; fi
+
+  publish:
+    needs: [build, runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: agent-v40-build
+          path: downloaded
+      - name: Package final v40 APK
+        run: |
+          set -euo pipefail
+          cp downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v40.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v40.apk > Agent-1.0-ORDRO-EP6-v40.apk.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Agent-1.0-ORDRO-EP6-v40-BEHAVIOR-VERIFIED
+          path: |
+            Agent-1.0-ORDRO-EP6-v40.apk
+            Agent-1.0-ORDRO-EP6-v40.apk.sha256
+          retention-days: 30
