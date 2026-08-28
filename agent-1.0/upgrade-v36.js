@@ -3,7 +3,7 @@
 (function(root){
   'use strict';
 
-  const VERSION='36';
+  const VERSION = '36';
   const enc=new TextEncoder();
 
   function ascii(s){
@@ -183,3 +183,5 @@
   boot();setTimeout(boot,250);setTimeout(boot,900);
   new MutationObserver(improveFileLinks).observe(document.documentElement,{subtree:true,childList:true});
 })(typeof window!=='undefined'?window:globalThis);
+
+// Deployment probe marker; kept at EOF so curl can finish cleanly before grep exits: const VERSION='36'
