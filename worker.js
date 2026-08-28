@@ -21,7 +21,7 @@ export default {
     try{
       if(url.pathname==='/health')return j({
         ok:true,
-        service:'EARA smart assistant backend v34',
+        service:'EARA smart assistant backend v43',
         defaultModel:TERRA,
         deepModel:SOL,
         fallbackModel:OSS,
@@ -52,9 +52,27 @@ export default {
 
       if(url.pathname==='/transcribe'&&request.method==='POST'){
         const incoming=await request.formData(),audio=incoming.get('audio');
-        if(!audio)return j({error:'Missing audio'},400,cors);
-        const bytes=[...new Uint8Array(await audio.arrayBuffer())];
-        const result=await env.AI.run('@cf/openai/whisper-large-v3-turbo',{audio:bytes});
+        if(!(audio instanceof Blob)||!audio.size)return j({error:'Missing audio'},400,cors);
+        if(audio.size>7_500_000)return j({error:'Audio segment is too large'},413,cors);
+        const mime=String(audio.type||'audio/webm').split(';')[0]||'audio/webm';
+        const buffer=await audio.arrayBuffer();
+        const options={
+          task:'transcribe',
+          language:'en',
+          vad_filter:true,
+          condition_on_previous_text:false,
+          no_speech_threshold:0.65
+        };
+        let result;
+        try{
+          // Workers AI's current typed interface accepts an audio stream plus its MIME type.
+          const body=new Blob([buffer],{type:mime}).stream();
+          result=await env.AI.run('@cf/openai/whisper-large-v3-turbo',{audio:{body,contentType:mime},...options});
+        }catch(firstError){
+          // Some older Workers AI deployments expect base64 instead of the stream form.
+          if(!/audio|schema|type|input|binary|array|required propert/i.test(String(firstError?.message||firstError)))throw firstError;
+          result=await env.AI.run('@cf/openai/whisper-large-v3-turbo',{audio:bytesToBase64(new Uint8Array(buffer)),...options});
+        }
         return j({text:String(result?.text||result?.result?.text||'').trim()},200,cors);
       }
 
@@ -98,7 +116,7 @@ export default {
 
       return j({
         ok:true,
-        service:'EARA smart assistant backend v34',
+        service:'EARA smart assistant backend v43',
         intelligence:'GPT-5.6 Terra everyday + GPT-5.6 Sol deep reasoning',
         vision:'GPT-5.6 live-frame vision',
         web:'automatic current-information search',
@@ -490,3 +508,4 @@ function extract(d){
 function j(data,status=200,headers={}){
   return new Response(JSON.stringify(data),{status,headers:{...headers,'Content-Type':'application/json','Cache-Control':'no-store'}});
 }
+
