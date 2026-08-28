@@ -1,0 +1,282 @@
+name: Agent v39 EP6 Split Network Live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "android-app/**"
+      - "agent-1.0/**"
+      - "scripts/prepare-v39.py"
+      - ".github/workflows/v39-ep6-split-live.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-v39-ep6-split-live
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Prepare v39 Android source
+        run: python3 scripts/prepare-v39.py
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Static feature and safety checks
+        run: |
+          set -euo pipefail
+          node --check agent-1.0/ordro-native.js
+          grep -q "liveTalkBtn" agent-1.0/ordro-native.js
+          grep -q "liveCameraBtn" agent-1.0/ordro-native.js
+          grep -q "USB Ethernet" agent-1.0/ordro-native.js
+          grep -q "TRANSPORT_ETHERNET" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "TRANSPORT_CELLULAR" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "bindProcessToNetwork" android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "setSocketFactory(cameraNetwork.getSocketFactory())" android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q 'candidates.add("rtsp://" + host + "/MJPG")' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'host + "/LIVE' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          ! grep -q 'host + "/STREAM' android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q "onRenderedFirstFrame" android-app/app/src/main/java/com/eara/ai/OrdroCameraBridge.java
+          grep -q "CHANGE_NETWORK_STATE" android-app/app/src/main/AndroidManifest.xml
+          grep -q "versionCode = 39" android-app/app/build.gradle.kts
+          echo V39_SPLIT_NETWORK_SAFE_CAMERA_STATIC=PASS
+
+      - name: Verify PDF and Word generators
+        run: |
+          set -euo pipefail
+          node --input-type=commonjs <<'NODE'
+          const fs=require('fs'),vm=require('vm');
+          vm.runInThisContext(fs.readFileSync('agent-1.0/upgrade-v36.js','utf8'),{filename:'upgrade-v36.js'});
+          if(!globalThis.AgentArtifacts) throw new Error('AgentArtifacts missing');
+          const files=AgentArtifacts.buildFiles({title:'V39 Test',content:'# V39 Test\n\nPDF and Word generation works.\n\n- PDF\n- DOCX',formats:['pdf','docx']},'Create a PDF and Word document');
+          if(files.length!==2) throw new Error('Expected PDF and DOCX');
+          const pdf=files.find(f=>f.name.endsWith('.pdf')),docx=files.find(f=>f.name.endsWith('.docx'));
+          const pb=Buffer.from(pdf.data,'base64'),db=Buffer.from(docx.data,'base64');
+          if(pb.subarray(0,5).toString()!=='%PDF-') throw new Error('Invalid PDF');
+          if(db.subarray(0,2).toString()!=='PK') throw new Error('Invalid DOCX');
+          fs.writeFileSync('/tmp/v39.pdf',pb);fs.writeFileSync('/tmp/v39.docx',db);
+          console.log('V39_PDF_DOCX=PASS');
+          NODE
+          unzip -t /tmp/v39.docx >/dev/null
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android build SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.1.0"
+          cache-provider: basic
+
+      - name: Build v39 APK
+        working-directory: android-app
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify APK metadata
+        run: |
+          set -euo pipefail
+          APK="android-app/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='com.eara.ai'" apk-badging.txt
+          grep -q "versionCode='39'" apk-badging.txt
+          grep -q "versionName='39.0-ep6-split-network-live'" apk-badging.txt
+          grep -q "launchable-activity: name='com.eara.ai.MainActivity'" apk-badging.txt
+          echo V39_APK_METADATA=PASS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: agent-v39-build
+          path: |
+            android-app/app/build/outputs/apk/debug/app-debug.apk
+            apk-badging.txt
+          retention-days: 7
+
+  runtime:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - api: 26
+            image: system-images;android-26;default;x86_64
+            device: pixel_2
+            label: android8
+          - api: 35
+            image: system-images;android-35;default;x86_64
+            device: pixel_6
+            label: android15
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+      - uses: android-actions/setup-android@v3
+      - name: Install emulator image
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "emulator" "${{ matrix.image }}"
+      - uses: actions/download-artifact@v7
+        with:
+          name: agent-v39-build
+          path: downloaded
+
+      - name: Boot, install, and cold launch v39
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          EMU="$ANDROID_HOME/emulator/emulator"
+          AVD="agent_v39_${{ matrix.api }}"
+          export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd-${{ matrix.api }}"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd --force --name "$AVD" --package "${{ matrix.image }}" --device "${{ matrix.device }}"
+          "$EMU" -list-avds | grep -qx "$AVD"
+          ACCEL=off
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            if "$EMU" -accel-check 2>&1 | grep -qi usable; then ACCEL=on; fi
+          fi
+          "$EMU" -avd "$AVD" -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back virtualscene -camera-front emulated -accel "$ACCEL" > "emulator-${{ matrix.label }}.log" 2>&1 &
+          EPID=$!
+          trap 'adb emu kill >/dev/null 2>&1 || true; kill $EPID >/dev/null 2>&1 || true' EXIT
+          adb start-server
+          OK=0
+          for i in $(seq 1 240); do
+            if ! kill -0 "$EPID" 2>/dev/null; then tail -200 "emulator-${{ matrix.label }}.log"; exit 1; fi
+            if [ "$(adb get-state 2>/dev/null || true)" = device ] && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true)" = 1 ]; then OK=1; break; fi
+            sleep 3
+          done
+          test "$OK" -eq 1
+          sleep 15
+          adb install -r -g "$APK" | tee "install-${{ matrix.label }}.txt"
+          grep -q Success "install-${{ matrix.label }}.txt"
+          adb shell dumpsys package com.eara.ai > "package-${{ matrix.label }}.txt"
+          grep -q 'versionCode=39' "package-${{ matrix.label }}.txt"
+          adb logcat -c || true
+          adb shell am force-stop com.eara.ai || true
+          OUT="$(adb shell am start -W -n com.eara.ai/.MainActivity 2>&1)"
+          echo "$OUT" | tee "launch-${{ matrix.label }}.txt"
+          echo "$OUT" | grep -q 'Status: ok'
+          sleep 30
+          test -n "$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+          adb shell dumpsys activity activities > "activity-${{ matrix.label }}.txt"
+          grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity" "activity-${{ matrix.label }}.txt"
+          adb logcat -d -v time > "logcat-${{ matrix.label }}.txt" || true
+          if grep -q 'Process: com.eara.ai' "logcat-${{ matrix.label }}.txt"; then
+            grep -n -B10 -A60 'Process: com.eara.ai' "logcat-${{ matrix.label }}.txt" || true
+            exit 1
+          fi
+          adb exec-out screencap -p > "screen-${{ matrix.label }}.png"
+          test -s "screen-${{ matrix.label }}.png"
+          echo "V39_${{ matrix.label }}_COLD_LAUNCH=PASS"
+
+      - name: Android 15 interaction verification
+        if: matrix.api == 35
+        run: |
+          set -euo pipefail
+          python3 -m pip install --quiet websocket-client
+          SOCKET="$(adb shell cat /proc/net/unix | tr -d '\r' | awk '/webview_devtools_remote/{print $8}' | tail -1 | sed 's/^@//')"
+          test -n "$SOCKET"
+          adb forward tcp:9222 "localabstract:$SOCKET"
+          cat > /tmp/v39_ui.py <<'PY'
+          import json,time,urllib.request,websocket,subprocess
+          pages=json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=10))
+          page=next((p for p in pages if 'agent-1.0' in p.get('url','')),pages[0])
+          ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=30,suppress_origin=True)
+          n=0
+          def ev(expr,await_promise=False):
+            global n;n+=1
+            ws.send(json.dumps({'id':n,'method':'Runtime.evaluate','params':{'expression':expr,'returnByValue':True,'awaitPromise':await_promise}}))
+            while True:
+              r=json.loads(ws.recv())
+              if r.get('id')!=n: continue
+              if 'exceptionDetails' in r.get('result',{}): raise RuntimeError(r['result']['exceptionDetails'])
+              return r['result']['result'].get('value')
+          end=time.time()+60
+          while time.time()<end:
+            try:
+              if ev("document.readyState==='complete' && typeof EARANative==='object' && document.querySelector('#liveTalkBtn') && document.querySelector('#liveCameraBtn') && document.querySelector('#phoneCameraBtn')"): break
+            except Exception: pass
+            time.sleep(1)
+          else: raise RuntimeError('v39 controls not ready')
+          bridge=ev("(()=>({network:typeof EARANative.getNetworkRoutingStatus,refresh:typeof EARANative.refreshWearableCamera,capture:typeof EARANative.captureWearableFrame,save:typeof EARANative.saveBase64File}))()")
+          assert bridge=={'network':'function','refresh':'function','capture':'function','save':'function'},bridge
+          labels=ev("(()=>({upload:document.querySelector('#uploadBtn small')?.textContent,phone:document.querySelector('#phoneCameraBtn small')?.textContent,ep6:document.querySelector('#cameraBtn small')?.textContent,talk:document.querySelector('#liveTalkBtn')?.title,camera:document.querySelector('#liveCameraBtn')?.title}))()")
+          assert labels['upload']=='Upload file' and labels['phone']=='Phone camera' and labels['ep6']=='EP6 camera',labels
+          assert labels['talk']=='Live conversation' and labels['camera']=='Live camera',labels
+          route=json.loads(ev("EARANative.getNetworkRoutingStatus()"))
+          for k in ['ethernetAvailable','cellularAvailable','wifiInternetAvailable','internetBound','internetTransport']:
+            assert k in route,(k,route)
+          plus=ev("(()=>{const a=document.querySelector('#attachments');a.classList.remove('show');document.querySelector('#addBtn path').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return a.classList.contains('show')})()")
+          assert plus is True
+          ev("document.querySelector('#liveTalkBtn').click();true")
+          time.sleep(.3)
+          assert ev("document.querySelector('#liveTalkBtn').classList.contains('on')") is True
+          ev("document.querySelector('#liveTalkBtn').click();true")
+          print('V39_NATIVE_SPLIT_NETWORK_BRIDGE=PASS',route)
+          print('V39_LIVE_CONVERSATION_BUTTON=PASS')
+          print('V39_LIVE_CAMERA_BUTTON=PASS')
+          print('V39_UPLOAD_PHONE_EP6_CONTROLS=PASS')
+          print('V39_PLUS_MENU=PASS')
+          prompt='Create a PDF and Word document titled V39 Emulator Test. Include the sentence: document generation works.'
+          result=ev("(async()=>{window.__docs=await fetchChat("+json.dumps(prompt)+",'',null);return {route:__docs.route,names:(__docs.files||[]).map(f=>f.name),sigs:(__docs.files||[]).map(f=>atob(f.data).slice(0,5))}})()",True)
+          assert result['route']=='document-draft-v36',result
+          assert any(n.lower().endswith('.pdf') for n in result['names']) and any(n.lower().endswith('.docx') for n in result['names']),result
+          assert any(s.startswith('%PDF-') for s in result['sigs']) and any(s.startswith('PK') for s in result['sigs']),result
+          print('V39_WEBVIEW_PDF_WORD=PASS')
+          ws.close()
+          PY
+          python3 /tmp/v39_ui.py | tee v39-ui.txt
+          adb exec-out screencap -p > v39-ui.png
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: v39-${{ matrix.label }}-evidence
+          path: |
+            emulator-${{ matrix.label }}.log
+            install-${{ matrix.label }}.txt
+            launch-${{ matrix.label }}.txt
+            package-${{ matrix.label }}.txt
+            activity-${{ matrix.label }}.txt
+            logcat-${{ matrix.label }}.txt
+            screen-${{ matrix.label }}.png
+            v39-ui.txt
+            v39-ui.png
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    needs: [build, runtime]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: agent-v39-build
+          path: downloaded
+      - name: Package final v39 APK
+        run: |
+          set -euo pipefail
+          cp downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v39.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v39.apk > Agent-1.0-ORDRO-EP6-v39.apk.sha256
+      - uses: actions/upload-artifact@v7
+        with:
+          name: Agent-1.0-ORDRO-EP6-v39-TRIPLE-VERIFIED
+          path: |
+            Agent-1.0-ORDRO-EP6-v39.apk
+            Agent-1.0-ORDRO-EP6-v39.apk.sha256
+          retention-days: 30
