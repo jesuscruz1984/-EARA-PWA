@@ -11,6 +11,10 @@ function headers(origin){
   if(origin===ORIGIN)h.set('Access-Control-Allow-Origin',ORIGIN);
   return h;
 }
+function safeError(e){
+  const s=String(e?.message||e||'Image model failed').replace(/[\r\n]+/g,' ').slice(0,500);
+  return s.replace(/(?:Bearer|token|secret|key)\s*[:=]\s*[^\s,;]+/gi,'credential=[redacted]');
+}
 async function imageResponse(env,body){
   const prompt=String(body?.text||'').trim().slice(0,2048);
   const result=await env.AI.run(FLUX,{prompt,steps:6,seed:Math.floor(Math.random()*2147483646)+1});
@@ -38,8 +42,15 @@ export default {
           const data=await imageResponse(env,body);
           return new Response(JSON.stringify(data),{status:200,headers:headers(request.headers.get('Origin')||'')});
         }catch(e){
-          // Preserve the existing Agent route if Workers AI image generation itself is unavailable.
-          // The v40 live test treats absence of an actual image as a failure, so this cannot silently pass CI.
+          const err=safeError(e);
+          return new Response(JSON.stringify({
+            text:'Image generation is temporarily unavailable.',
+            speech:'Image generation is temporarily unavailable.',
+            images:[],
+            route:'workers-ai-image-error',
+            model:FLUX,
+            imageError:err
+          }),{status:503,headers:headers(request.headers.get('Origin')||'')});
         }
       }
     }
