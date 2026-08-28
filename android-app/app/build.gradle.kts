@@ -10,8 +10,12 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 36
-        versionName = "36.0-files-camera-docs-tested"
+        versionCode = 37
+        versionName = "37.0-files-camera-docs-tested"
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     buildTypes {
