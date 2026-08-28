@@ -31,7 +31,7 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Static feature and safety checks
+      - name: Static feature and camera safety checks
         run: |
           set -euo pipefail
           node --check agent-1.0/ordro-native.js
@@ -67,6 +67,20 @@ jobs:
           console.log('V39_PDF_DOCX=PASS');
           NODE
           unzip -t /tmp/v39.docx >/dev/null
+
+      - name: Wait for v39 frontend deployment
+        run: |
+          set -euo pipefail
+          OK=0
+          for i in $(seq 1 36); do
+            if curl -fsS --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/ordro-native.js?v=39" -o /tmp/ordro.js \
+              && grep -q "Agent 1.0 v39" /tmp/ordro.js \
+              && grep -q "liveTalkBtn" /tmp/ordro.js \
+              && grep -q "liveCameraBtn" /tmp/ordro.js; then OK=1; break; fi
+            sleep 5
+          done
+          test "$OK" -eq 1
+          echo V39_FRONTEND_LIVE=PASS
 
       - uses: actions/setup-java@v5
         with:
@@ -126,16 +140,18 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: android-actions/setup-android@v3
+
       - name: Install emulator image
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "emulator" "${{ matrix.image }}"
+
       - uses: actions/download-artifact@v7
         with:
           name: agent-v39-build
           path: downloaded
 
-      - name: Boot, install, and cold launch v39
+      - name: Boot emulator, install, and cold launch v39
         run: |
           set -euo pipefail
           APK="$GITHUB_WORKSPACE/downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk"
@@ -152,7 +168,7 @@ jobs:
           fi
           "$EMU" -avd "$AVD" -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back virtualscene -camera-front emulated -accel "$ACCEL" > "emulator-${{ matrix.label }}.log" 2>&1 &
           EPID=$!
-          trap 'adb emu kill >/dev/null 2>&1 || true; kill $EPID >/dev/null 2>&1 || true' EXIT
+          echo "$EPID" > emulator.pid
           adb start-server
           OK=0
           for i in $(seq 1 240); do
@@ -188,12 +204,13 @@ jobs:
         if: matrix.api == 35
         run: |
           set -euo pipefail
+          test "$(adb get-state 2>/dev/null)" = device
           python3 -m pip install --quiet websocket-client
           SOCKET="$(adb shell cat /proc/net/unix | tr -d '\r' | awk '/webview_devtools_remote/{print $8}' | tail -1 | sed 's/^@//')"
           test -n "$SOCKET"
           adb forward tcp:9222 "localabstract:$SOCKET"
           cat > /tmp/v39_ui.py <<'PY'
-          import json,time,urllib.request,websocket,subprocess
+          import json,time,urllib.request,websocket
           pages=json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=10))
           page=next((p for p in pages if 'agent-1.0' in p.get('url','')),pages[0])
           ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=30,suppress_origin=True)
@@ -209,7 +226,8 @@ jobs:
           end=time.time()+60
           while time.time()<end:
             try:
-              if ev("document.readyState==='complete' && typeof EARANative==='object' && document.querySelector('#liveTalkBtn') && document.querySelector('#liveCameraBtn') && document.querySelector('#phoneCameraBtn')"): break
+              ready=ev("document.readyState==='complete' && typeof EARANative==='object' && document.querySelector('#liveTalkBtn') && document.querySelector('#liveCameraBtn') && document.querySelector('#phoneCameraBtn')")
+              if ready: break
             except Exception: pass
             time.sleep(1)
           else: raise RuntimeError('v39 controls not ready')
@@ -242,6 +260,16 @@ jobs:
           PY
           python3 /tmp/v39_ui.py | tee v39-ui.txt
           adb exec-out screencap -p > v39-ui.png
+          test -s v39-ui.png
+
+      - name: Recheck app after interaction test
+        run: |
+          set -euo pipefail
+          test "$(adb get-state 2>/dev/null)" = device
+          test -n "$(adb shell pidof com.eara.ai | tr -d '\r' || true)"
+          adb logcat -d -v time > "logcat-final-${{ matrix.label }}.txt" || true
+          if grep -q 'Process: com.eara.ai' "logcat-final-${{ matrix.label }}.txt"; then exit 1; fi
+          echo "V39_${{ matrix.label }}_POST_INTERACTION_ALIVE=PASS"
 
       - uses: actions/upload-artifact@v7
         if: always()
@@ -254,11 +282,18 @@ jobs:
             package-${{ matrix.label }}.txt
             activity-${{ matrix.label }}.txt
             logcat-${{ matrix.label }}.txt
+            logcat-final-${{ matrix.label }}.txt
             screen-${{ matrix.label }}.png
             v39-ui.txt
             v39-ui.png
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Stop emulator
+        if: always()
+        run: |
+          adb emu kill >/dev/null 2>&1 || true
+          if [ -f emulator.pid ]; then kill "$(cat emulator.pid)" >/dev/null 2>&1 || true; fi
 
   publish:
     needs: [build, runtime]
