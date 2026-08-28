@@ -1,6 +1,7 @@
 from pathlib import Path
 
 # Start from the already-tested v39 Android source transformation.
+# This v40 preparation is also the build trigger after the live backend image fix.
 exec(compile(Path("scripts/prepare-v39.py").read_text(), "scripts/prepare-v39.py", "exec"))
 
 
