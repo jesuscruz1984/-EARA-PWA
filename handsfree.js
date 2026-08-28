@@ -1,4 +1,4 @@
-// EARA v41 quiet Android listener + noise-aware hands-free wake phrase: Eara
+// EARA v42 quiet Android listener + noise-aware hands-free wake phrase: Eara
 (()=>{
   const nativeSpeech=window.EARANative&&typeof window.EARANative.startListening==='function'?window.EARANative:null;
   function NativeSpeechRecognition(){
