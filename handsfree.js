@@ -1,6 +1,8 @@
-// EARA v42 quiet Android listener + noise-aware hands-free wake phrase: Eara
+// EARA v43 continuous stream microphone + noise-aware hands-free wake phrase: Eara
 (()=>{
   const nativeSpeech=window.EARANative&&typeof window.EARANative.startListening==='function'?window.EARANative:null;
+  const streamMic=!!(window.EARANative&&window.MediaRecorder&&navigator.mediaDevices);
+  const TRANSCRIBE_URL='https://eara-pwa.jesuscruz1984.workers.dev/transcribe';
   function NativeSpeechRecognition(){
     this.continuous=false;this.interimResults=true;this.lang='en-US';this.maxAlternatives=5;this._started=false;
     const emitResult=(text,isFinal)=>{const alt={transcript:String(text||'')},result=[alt];result.isFinal=!!isFinal;const results=[result];this.onresult?.({resultIndex:0,results})};
@@ -10,7 +12,54 @@
     this.abort=()=>{if(!this._started)return;try{nativeSpeech.stopListening()}catch(_){}this._started=false};
     this.stop=this.abort;
   }
-  const SR=nativeSpeech?NativeSpeechRecognition:(window.SpeechRecognition||window.webkitSpeechRecognition);
+  function StreamSpeechRecognition(){
+    this.continuous=true;this.interimResults=false;this.lang='en-US';this.maxAlternatives=1;this._started=false;this._recorder=null;this._timer=0;this._generation=0;this._audioContext=null;this._analyser=null;this._source=null;this._queue=Promise.resolve();
+    const emitResult=text=>{const alt={transcript:String(text||'').trim()},result=[alt];result.isFinal=true;const results=[result];this.onresult?.({resultIndex:0,results})};
+    const liveTrack=()=>window.getEaraStream?.()?.getAudioTracks?.()?.find(t=>t.readyState==='live'&&t.enabled!==false)||null;
+    const mimeType=()=>['audio/webm;codecs=opus','audio/webm','audio/mp4'].find(t=>MediaRecorder.isTypeSupported?.(t))||'';
+    const extension=type=>String(type||'').includes('mp4')?'m4a':'webm';
+    const stopRecorder=()=>{clearInterval(this._timer);this._timer=0;try{if(this._recorder?.state==='recording')this._recorder.stop()}catch(_){}};
+    const ensureAnalyser=track=>{
+      try{
+        if(!this._audioContext){const AC=window.AudioContext||window.webkitAudioContext;this._audioContext=AC?new AC():null}
+        if(!this._audioContext)return null;
+        if(this._audioContext.state==='suspended')this._audioContext.resume().catch(()=>{});
+        if(!this._analyser){this._source=this._audioContext.createMediaStreamSource(new MediaStream([track]));this._analyser=this._audioContext.createAnalyser();this._analyser.fftSize=512;this._source.connect(this._analyser)}
+        return this._analyser;
+      }catch(_){return null}
+    };
+    const transcribe=async(blob,type,generation)=>{
+      if(!blob||blob.size<700)return;
+      try{
+        const fd=new FormData();fd.append('audio',blob,`eara-wake.${extension(type||blob.type)}`);
+        const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),20000);
+        const r=await fetch(TRANSCRIBE_URL,{method:'POST',body:fd,cache:'no-store',signal:controller.signal}),raw=await r.text();clearTimeout(timeout);
+        if(!r.ok)throw new Error(raw||`HTTP ${r.status}`);const text=String(JSON.parse(raw).text||'').trim();
+        if(text&&this._started&&generation===this._generation)emitResult(text);
+      }catch(_){if(this._started&&generation===this._generation){setState('Listening for “Eara” — connection retry…');setBadge('Eara Ready')}}
+    };
+    const recordNext=()=>{
+      if(!this._started)return;const track=liveTrack();
+      if(!track){this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.();return}
+      const generation=this._generation,clone=track.clone(),type=mimeType(),chunks=[],analyser=ensureAnalyser(track),samples=analyser?new Uint8Array(analyser.fftSize):null;
+      let recorder,hadVoice=false,lastVoice=0,startedAt=Date.now(),noiseFloor=.006,finished=false;
+      const finish=()=>{if(finished)return;finished=true;clearInterval(this._timer);this._timer=0;try{clone.stop()}catch(_){};if(this._recorder===recorder)this._recorder=null;const blob=new Blob(chunks,{type:recorder?.mimeType||type||'audio/webm'});if(this._started&&generation===this._generation){setTimeout(recordNext,25);if(hadVoice&&blob.size>700)this._queue=this._queue.then(()=>transcribe(blob,blob.type,generation)).catch(()=>{})}};
+      try{
+        const options={audioBitsPerSecond:48000};if(type)options.mimeType=type;recorder=new MediaRecorder(new MediaStream([clone]),options);this._recorder=recorder;
+        recorder.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data)};recorder.onstop=finish;recorder.onerror=()=>{finish();if(this._started)this.onerror?.({error:'audio-capture'})};recorder.start();
+        this._timer=setInterval(()=>{
+          if(!this._started||generation!==this._generation){stopRecorder();return}
+          const now=Date.now(),elapsed=now-startedAt;
+          if(analyser&&samples){analyser.getByteTimeDomainData(samples);let sum=0;for(const n of samples){const x=(n-128)/128;sum+=x*x}const rms=Math.sqrt(sum/samples.length);if(!hadVoice&&rms<.04)noiseFloor=noiseFloor*.96+rms*.04;const threshold=Math.max(.011,noiseFloor*2.4);if(rms>threshold){hadVoice=true;lastVoice=now}}
+          if((hadVoice&&now-lastVoice>850&&elapsed>1100)||(!hadVoice&&elapsed>2200)||elapsed>12000)stopRecorder();
+        },80);
+      }catch(_){finish();this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.()}
+    };
+    this.start=()=>{if(this._started)return;this._started=true;this._generation++;this.onstart?.();try{recordNext()}catch(_){this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.()}};
+    this.abort=()=>{if(!this._started)return;this._started=false;this._generation++;stopRecorder();this.onend?.()};
+    this.stop=this.abort;
+  }
+  const SR=streamMic?StreamSpeechRecognition:(nativeSpeech?NativeSpeechRecognition:(window.SpeechRecognition||window.webkitSpeechRecognition));
   const WAKE=/^\s*(?:(?:hey|ok|okay)\s+)?(?:eara|era|aira|eira|eera|ear\s+(?:a|uh))\b[\s,.:;!?-]*(.*)$/i;
   const ACTIVE_MS=10000;
   const COMMAND_SILENCE_MS=650;
@@ -23,7 +72,7 @@
   const setState=t=>{const e=document.querySelector('#state');if(e)e.textContent=t};
   const setTalk=t=>{const e=document.querySelector('#talk');if(e)e.textContent=t};
   const setBadge=t=>{try{badge(t)}catch(_){}};
-  const micAvailable=()=>!!(window.getEaraStream?.()&&window.isEaraMicEnabled?.());
+  const micAvailable=()=>{const s=window.getEaraStream?.();if(!s||!window.isEaraMicEnabled?.())return false;if(!streamMic)return true;return !!s.getAudioTracks?.().find(t=>t.readyState==='live'&&t.enabled!==false)};
   const idleState=()=>active?'Eara active — keep talking':'Listening for “Eara”';
   const idleBadge=()=>active?'Eara Active':'Eara Ready';
 
@@ -103,7 +152,7 @@
   function enable(){setupRecognition();if(!SR){setState('Hands-free recognition is not supported in this browser.');return}handsFree=true;speechErrorCount=0;updateSpeakerButton();scheduleRestart(40);primeAudio()}
   function disable(){handsFree=false;clearTimeout(restartTimer);clearTimeout(commandTimer);clearActiveTimer();starting=false;active=false;commandBuffer='';try{recognition?.abort()}catch(_){}}
   function recoverListening(){if(!micAvailable())return;setupRecognition();handsFree=true;speechErrorCount=0;if(!speaking&&!processing)scheduleRestart(35)}
-  window.forceEaraListening=recoverListening;window.addEventListener('eara-media-ready',enable);window.addEventListener('eara-mic-enabled',enable);window.addEventListener('eara-mic-disabled',disable);
+  window.forceEaraListening=recoverListening;window.addEventListener('eara-media-ready',enable);window.addEventListener('eara-mic-enabled',enable);window.addEventListener('eara-mic-disabled',disable);window.addEventListener('eara-visit-started',disable);window.addEventListener('eara-visit-stopped',()=>{if(window.isEaraMicEnabled?.())recoverListening()});
 
   const talk=document.querySelector('#talk');if(talk)talk.addEventListener('click',async e=>{e.preventDefault();e.stopImmediatePropagation();speakerEnabled=!speakerEnabled;updateSpeakerButton();if(!speakerEnabled){try{player?.pause()}catch(_){}revokeObjectUrl();try{speechSynthesis.cancel()}catch(_){}setState(active?'Eara active — speaker off':'Listening for “Eara”');setBadge('Speaker Off');recoverListening()}else{await primeAudio();recoverListening();setState(idleState());setBadge(idleBadge())}},true);
   document.addEventListener('pointerdown',()=>{if(speakerEnabled&&!audioPrimed)primeAudio();recoverListening()},{capture:true});
