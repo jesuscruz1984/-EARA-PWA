@@ -1,15 +1,19 @@
-/* Agent 1.0 v39 native ORDRO EP6 Plus integration.
-   EP6 camera traffic stays on the camera Wi-Fi. Agent internet can use
-   cellular, Ethernet, or Android's validated default network. */
+/* Agent 1.0 v40 native live conversation + ORDRO EP6 integration.
+   - EP6 stays on local Wi-Fi.
+   - Agent internet stays on validated Ethernet/cellular/Internet Wi-Fi.
+   - Live conversation is a listen -> send -> speak -> listen loop.
+   - When EP6 live view is open, every conversational turn includes the current frame. */
 (function(){
   'use strict';
 
-  window.AgentPhoneCamera=window.openCamera;
+  const phoneCamera=window.openCamera;
+  window.AgentPhoneCamera=phoneCamera;
+  window.openPhoneCamera=phoneCamera;
 
   if(!document.getElementById('agentUpgradeV36')){
     const s=document.createElement('script');
     s.id='agentUpgradeV36';
-    s.src='upgrade-v36.js?v=36';
+    s.src='upgrade-v36.js?v=40';
     s.async=true;
     document.head.appendChild(s);
   }
@@ -18,11 +22,15 @@
   if(!bridge||typeof bridge.getWearableCameraStatus!=='function')return;
 
   let wearable={supported:true,state:'disconnected',ready:false};
-  let nativeSpeech=false;
   let liveTalk=false;
+  let liveSpeaking=false;
   let liveAudio=null;
+  let liveCameraOpen=false;
   let liveCameraTimer=0;
-  let openLiveWhenReady=false;
+  let restartTimer=0;
+  let sendingVoiceTurn=false;
+  let lastLiveFrame='';
+  let lastLiveFrameAt=0;
 
   function parseStatus(raw){
     try{return typeof raw==='string'?JSON.parse(raw):raw||{}}
@@ -37,11 +45,11 @@
     catch(_){return {}}
   }
   function wearableLabel(s){
-    if(s?.ready)return 'EP6 camera ready';
-    if(s?.state==='waiting-first-frame')return 'EP6 connected - waiting for video';
-    if(s?.state==='connecting'||s?.state==='connecting-stream')return 'Connecting EP6 camera...';
-    if(s?.state==='needs-wifi')return 'Connect to EP6 Wi-Fi';
-    if(s?.state==='stream-error')return 'EP6 Wi-Fi connected - video unavailable';
+    if(s?.ready)return 'EP6 live';
+    if(s?.state==='waiting-first-frame')return 'EP6 stream open - waiting for video';
+    if(s?.state==='connecting'||s?.state==='connecting-stream')return 'Connecting EP6…';
+    if(s?.state==='needs-wifi')return 'Join the EP6 Wi-Fi';
+    if(s?.state==='stream-error')return 'EP6 Wi-Fi found - video stream unavailable';
     return 'EP6 camera not connected';
   }
   function networkLabel(){
@@ -49,47 +57,118 @@
     if(n.internetTransport==='ethernet')return 'Internet: USB Ethernet';
     if(n.internetTransport==='cellular')return 'Internet: cellular';
     if(n.internetTransport==='wifi')return 'Internet: Wi-Fi';
-    if(n.cellularBound)return 'Internet: cellular';
-    return 'Internet: Android default network';
+    return 'Internet: Android default';
+  }
+
+  function injectV40Styles(){
+    if($('#agentV40Style'))return;
+    const st=document.createElement('style');
+    st.id='agentV40Style';
+    st.textContent=`
+      .main{height:100dvh!important;min-height:0!important;overflow:hidden!important}
+      .chat{min-height:0!important;overflow-y:auto!important;overflow-x:hidden!important;touch-action:pan-y!important;-webkit-overflow-scrolling:touch!important;overscroll-behavior-y:contain!important}
+      .messages{min-height:100%;}
+      .menu{display:grid!important}
+      body.v40-sidebar-hidden .app{grid-template-columns:0 minmax(0,1fr)!important}
+      body.v40-sidebar-hidden .sidebar{display:none!important}
+      #ep6LiveModal{background:#050505!important;padding:0!important;align-items:stretch!important;justify-content:stretch!important}
+      #ep6LiveModal .cameraCard{width:100%!important;height:100%!important;max-width:none!important;border:0!important;border-radius:0!important;background:#050505!important;color:#fff!important;display:flex!important;flex-direction:column!important}
+      #ep6LiveHeader{height:58px;flex:0 0 58px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:#111;color:#fff}
+      #ep6LiveVideoWrap{position:relative;flex:1;min-height:0;display:flex;align-items:center;justify-content:center;background:#000;overflow:hidden}
+      #ep6LiveImage{width:100%!important;height:100%!important;object-fit:contain!important;background:#000!important}
+      #ep6LiveOverlay{position:absolute;left:12px;bottom:12px;right:12px;display:flex;justify-content:space-between;gap:8px;pointer-events:none}
+      #ep6LiveOverlay span{background:rgba(0,0,0,.62);color:#fff;border-radius:999px;padding:7px 10px;font-size:12px;backdrop-filter:blur(8px)}
+      #ep6LiveControls{flex:0 0 auto;display:flex;justify-content:center;align-items:center;gap:18px;padding:14px 16px calc(env(safe-area-inset-bottom) + 18px);background:#111}
+      #ep6LiveControls button{width:58px;height:58px;border-radius:50%;border:1px solid #3b3b3b;background:#222;color:#fff;display:grid;place-items:center;font-size:22px}
+      #ep6LiveControls button.on{background:#fff;color:#111}
+      #ep6LiveClose{font-size:15px!important;font-weight:650}
+      @media(max-width:760px){.sidebar.open{transform:translateX(0)!important}.drawerShade.show{opacity:1!important;pointer-events:auto!important}}
+    `;
+    document.head.appendChild(st);
+  }
+
+  function installHistoryFix(){
+    const menu=$('#menuBtn'),side=$('#sidebar'),shade=$('#drawerShade');
+    if(!menu||!side||menu.dataset.v40History==='1')return;
+    menu.dataset.v40History='1';
+    menu.onclick=e=>{
+      e.preventDefault();e.stopPropagation();
+      if(window.matchMedia('(max-width:760px)').matches){
+        const opening=!side.classList.contains('open');
+        side.classList.toggle('open',opening);
+        shade?.classList.toggle('show',opening);
+      }else{
+        document.body.classList.toggle('v40-sidebar-hidden');
+      }
+    };
+    if(shade)shade.onclick=()=>{side.classList.remove('open');shade.classList.remove('show')};
+  }
+
+  function ensurePhoneCameraButton(){
+    const box=$('#attachments'),ep6=$('#cameraBtn');
+    if(!box||!ep6||$('#phoneCameraBtn'))return;
+    const b=ep6.cloneNode(true);
+    b.id='phoneCameraBtn';b.title='Phone camera';
+    const lab=b.querySelector('small');if(lab)lab.textContent='Phone camera';
+    b.onclick=e=>{e.preventDefault();e.stopPropagation();hideAttachments();if(typeof phoneCamera==='function')phoneCamera()};
+    ep6.insertAdjacentElement('afterend',b);
+  }
+
+  function syncUi(){
+    const camera=$('#cameraBtn');
+    if(camera){
+      camera.dataset.source='ep6-live';
+      camera.title=wearable.ready?'ORDRO EP6 Plus live camera':'Connect ORDRO EP6 Plus live camera';
+      const label=camera.querySelector('small');if(label)label.textContent='EP6 live camera';
+      camera.onclick=e=>{e.preventDefault();e.stopPropagation();showLiveCamera()};
+    }
+    const mic=$('#dictateBtn');
+    if(mic){
+      mic.title='Live conversation';mic.setAttribute('aria-label','Live conversation');
+      mic.onclick=e=>{e.preventDefault();toggleLiveTalk()};
+      mic.classList.toggle('on',liveTalk);
+    }
+    const voice=$('#voiceToggle');
+    if(voice){
+      voice.title='Live conversation';voice.setAttribute('aria-label','Live conversation');
+      voice.onclick=e=>{e.preventDefault();toggleLiveTalk()};
+      voice.classList.toggle('on',liveTalk);
+    }
+    $('#ep6LiveTalk')?.classList.toggle('on',liveTalk);
+    const live=$('#liveCameraBtn');if(live)live.classList.toggle('on',liveCameraOpen&&wearable.ready);
   }
 
   function applyStatus(s){
     wearable=s||wearable;
-    const camera=$('#cameraBtn');
-    if(camera){
-      camera.title=wearable.ready?'ORDRO EP6 Plus camera ready':'Connect ORDRO EP6 Plus';
-      const label=camera.querySelector('small');
-      if(label)label.textContent='EP6 camera';
-    }
-    const live=$('#liveCameraBtn');
-    if(live)live.classList.toggle('on',!!wearable.ready);
+    syncUi();
+    const state=$('#ep6LiveState');if(state)state.textContent=wearableLabel(wearable);
     if(!busy&&wearable.state!=='disconnected')setStatus(wearableLabel(wearable),wearable.ready?'ok':(wearable.state==='stream-error'?'error':'busy'));
-    if(wearable.ready&&openLiveWhenReady){
-      openLiveWhenReady=false;
-      showLiveCamera();
-    }
+    if(wearable.ready&&liveCameraOpen)startLiveFrames();
   }
 
   function connectWearable(){
     hideAttachments();
     try{
+      if(typeof bridge.refreshWearableCamera==='function'){
+        const refreshed=parseStatus(bridge.refreshWearableCamera());
+        applyStatus(refreshed);
+        if(refreshed.ready)return refreshed;
+      }
       const s=parseStatus(bridge.connectWearableCamera());
       applyStatus(s);
-      if(!s.ready)setStatus('Connect/approve the EP6 Wi-Fi. Internet stays on Ethernet or cellular.','busy');
-    }catch(_){setStatus('Could not start EP6 Wi-Fi connection','error')}
+      if(!s.ready)setStatus('Connecting to the EP6 local Wi-Fi. Agent Internet stays on Ethernet/cellular.','busy');
+      return s;
+    }catch(_){setStatus('Could not start EP6 connection','error');return wearable}
   }
 
-  function captureWearable(select=true){
+  function captureWearable(select=false){
     try{
       const s=readStatus();
       if(!s.ready)return '';
       const frame=String(bridge.captureWearableFrame()||'');
       if(frame.startsWith('data:image/')){
-        if(select){
-          selectImage(frame,'ORDRO EP6 Plus');
-          setStatus('EP6 camera image ready','ok');
-          $('#prompt')?.focus();
-        }
+        lastLiveFrame=frame;lastLiveFrameAt=Date.now();
+        if(select){selectImage(frame,'ORDRO EP6 Plus');setStatus('EP6 frame attached','ok')}
         return frame;
       }
     }catch(_){}
@@ -103,223 +182,174 @@
   function ensureLiveCameraUi(){
     if($('#ep6LiveModal'))return;
     const modal=document.createElement('div');
-    modal.id='ep6LiveModal';
-    modal.className='cameraModal';
-    modal.innerHTML='<div class="cameraCard"><div style="padding:12px 14px;font-weight:650;display:flex;justify-content:space-between;align-items:center"><span>ORDRO EP6 Plus - Live Camera</span><span id="ep6LiveState" style="font-size:12px;color:#777"></span></div><img id="ep6LiveImage" alt="EP6 live camera" style="display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:#111"><div class="cameraBar"><button id="ep6LiveClose">Close</button><button class="use" id="ep6LiveUse">Use current frame</button></div></div>';
+    modal.id='ep6LiveModal';modal.className='cameraModal';
+    modal.innerHTML=`<div class="cameraCard">
+      <div id="ep6LiveHeader"><strong>ORDRO EP6 Plus — Live with Agent</strong><span id="ep6LiveState">Connecting…</span></div>
+      <div id="ep6LiveVideoWrap"><img id="ep6LiveImage" alt="EP6 live camera"><div id="ep6LiveOverlay"><span id="ep6LiveNet"></span><span id="ep6LiveVoice">Voice off</span></div></div>
+      <div id="ep6LiveControls"><button id="ep6LiveClose" aria-label="Close live camera">Close</button><button id="ep6LiveTalk" aria-label="Toggle live conversation">🎙</button></div>
+    </div>`;
     document.body.appendChild(modal);
     $('#ep6LiveClose').onclick=closeLiveCamera;
-    $('#ep6LiveUse').onclick=()=>{
-      const frame=captureWearable(true);
-      if(frame)closeLiveCamera();
-      else setStatus('No EP6 frame is available yet','error');
-    };
-    modal.addEventListener('click',e=>{if(e.target===modal)closeLiveCamera()});
+    $('#ep6LiveTalk').onclick=()=>toggleLiveTalk();
   }
 
   function refreshLiveCamera(){
-    const img=$('#ep6LiveImage'),st=$('#ep6LiveState');
-    if(!img)return;
-    const s=readStatus();
-    if(st)st.textContent=wearableLabel(s);
+    if(!liveCameraOpen)return;
+    const s=readStatus(),state=$('#ep6LiveState'),net=$('#ep6LiveNet'),voice=$('#ep6LiveVoice');
+    if(state)state.textContent=wearableLabel(s);
+    if(net)net.textContent=networkLabel();
+    if(voice)voice.textContent=liveTalk?(liveSpeaking?'Agent speaking':'Listening hands-free'):'Voice off';
     if(!s.ready)return;
-    const frame=captureWearable(false);
-    if(frame)img.src=frame;
+    const frame=captureWearable(false),img=$('#ep6LiveImage');
+    if(frame&&img)img.src=frame;
+  }
+  function startLiveFrames(){
+    if(!liveCameraOpen)return;
+    clearInterval(liveCameraTimer);
+    refreshLiveCamera();
+    liveCameraTimer=setInterval(refreshLiveCamera,350);
   }
   function showLiveCamera(){
-    ensureLiveCameraUi();
+    hideAttachments();injectV40Styles();ensureLiveCameraUi();
+    liveCameraOpen=true;$('#ep6LiveModal').classList.add('show');syncUi();
     const s=readStatus();
-    if(!s.ready){
-      openLiveWhenReady=true;
-      connectWearable();
-      return;
-    }
-    $('#ep6LiveModal').classList.add('show');
-    refreshLiveCamera();
-    clearInterval(liveCameraTimer);
-    liveCameraTimer=setInterval(refreshLiveCamera,650);
+    if(s.ready)startLiveFrames();
+    else{connectWearable();startLiveFrames()}
+    if(!liveTalk)toggleLiveTalk(true);
   }
   function closeLiveCamera(){
-    clearInterval(liveCameraTimer);liveCameraTimer=0;
-    $('#ep6LiveModal')?.classList.remove('show');
+    liveCameraOpen=false;clearInterval(liveCameraTimer);liveCameraTimer=0;
+    $('#ep6LiveModal')?.classList.remove('show');syncUi();
   }
 
-  function addTopButtons(){
-    const top=document.querySelector('.topActions');
-    if(!top)return;
+  function addLiveCameraButton(){
+    const top=document.querySelector('.topActions');if(!top)return;
+    $('#liveTalkBtn')?.remove();
     if(!$('#liveCameraBtn')){
       const b=document.createElement('button');
-      b.id='liveCameraBtn';b.className='iconBtn';b.title='Live camera';b.setAttribute('aria-label','Live camera');
+      b.id='liveCameraBtn';b.className='iconBtn';b.title='EP6 live camera';b.setAttribute('aria-label','EP6 live camera');
       b.innerHTML='<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="3"/><circle cx="12" cy="12.5" r="3.3"/><path d="M8 6l1.2-2h5.6L16 6"/></svg>';
-      b.onclick=showLiveCamera;
-      top.insertBefore(b,top.firstChild);
-    }
-    if(!$('#liveTalkBtn')){
-      const b=document.createElement('button');
-      b.id='liveTalkBtn';b.className='iconBtn';b.title='Live conversation';b.setAttribute('aria-label','Live conversation');
-      b.innerHTML='<svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"/><path d="M5.5 11.5a6.5 6.5 0 0 0 13 0M12 18v3M9 21h6"/></svg>';
-      b.onclick=toggleLiveTalk;
-      top.insertBefore(b,top.firstChild);
+      b.onclick=showLiveCamera;top.insertBefore(b,top.firstChild);
     }
   }
 
   function stopLiveAudio(){
     try{if(liveAudio){liveAudio.pause();if(liveAudio.src?.startsWith('blob:'))URL.revokeObjectURL(liveAudio.src)}}catch(_){}
-    liveAudio=null;
-    try{speechSynthesis.cancel()}catch(_){}
+    liveAudio=null;try{speechSynthesis.cancel()}catch(_){}
   }
-
   async function speakLive(text){
-    const msg=typeof cleanSpeech==='function'?cleanSpeech(text):String(text||'').slice(0,700);
+    const msg=typeof cleanSpeech==='function'?cleanSpeech(text):String(text||'').replace(/https?:\/\/\S+/g,'').slice(0,700);
     if(!msg||!liveTalk)return;
-    stopLiveAudio();
+    liveSpeaking=true;syncUi();
     try{
+      stopLiveAudio();
       const r=await fetch(BACKEND+'/tts?raw=1',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:msg,speaker:'asteria'}),cache:'no-store'});
       if(!r.ok)throw new Error('tts');
-      const blob=await r.blob(),url=URL.createObjectURL(blob),a=new Audio(url);
-      liveAudio=a;
-      await new Promise((resolve,reject)=>{
-        a.onended=()=>{URL.revokeObjectURL(url);if(liveAudio===a)liveAudio=null;resolve()};
-        a.onerror=()=>{URL.revokeObjectURL(url);if(liveAudio===a)liveAudio=null;reject(new Error('audio'))};
-        a.play().catch(reject);
-      });
-      return;
-    }catch(_){}
-    if(!liveTalk)return;
-    try{
-      await new Promise(resolve=>{
-        speechSynthesis.cancel();
-        const u=new SpeechSynthesisUtterance(msg);u.lang='en-US';u.onend=resolve;u.onerror=resolve;speechSynthesis.speak(u);
-      });
-    }catch(_){}
+      const blob=await r.blob(),url=URL.createObjectURL(blob),a=new Audio(url);liveAudio=a;
+      await new Promise((resolve,reject)=>{a.onended=()=>{URL.revokeObjectURL(url);if(liveAudio===a)liveAudio=null;resolve()};a.onerror=()=>{URL.revokeObjectURL(url);if(liveAudio===a)liveAudio=null;reject(new Error('audio'))};a.play().catch(reject)});
+    }catch(_){
+      if(liveTalk){
+        try{await new Promise(resolve=>{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(msg);u.lang='en-US';u.onend=resolve;u.onerror=resolve;speechSynthesis.speak(u)})}catch(__){}
+      }
+    }finally{liveSpeaking=false;syncUi()}
   }
 
-  function startListeningSoon(delay=250){
-    if(!liveTalk)return;
-    setTimeout(()=>{
-      if(!liveTalk||busy)return;
-      try{
-        bridge.startListening();
-        $('#liveTalkBtn')?.classList.add('on');
-        $('#dictateBtn')?.classList.add('on');
-        setStatus('Live conversation - listening...','busy');
-      }catch(_){setStatus('Live conversation microphone unavailable','error')}
+  function clearRestart(){clearTimeout(restartTimer);restartTimer=0}
+  function startListeningSoon(delay=220){
+    clearRestart();if(!liveTalk||liveSpeaking||sendingVoiceTurn)return;
+    restartTimer=setTimeout(()=>{
+      if(!liveTalk||liveSpeaking||sendingVoiceTurn||busy)return;
+      try{bridge.startListening();syncUi();setStatus('Live conversation — listening…','busy')}
+      catch(_){setStatus('Live conversation microphone unavailable','error')}
     },delay);
   }
-
-  function toggleLiveTalk(){
-    liveTalk=!liveTalk;
-    const b=$('#liveTalkBtn');
-    b?.classList.toggle('on',liveTalk);
+  function toggleLiveTalk(force){
+    const next=typeof force==='boolean'?force:!liveTalk;
+    if(next===liveTalk){syncUi();return}
+    liveTalk=next;voiceOn=false;localStorage.setItem('agent10VoiceOn','0');
+    clearRestart();
     if(!liveTalk){
-      try{bridge.stopListening()}catch(_){}
-      stopLiveAudio();
-      $('#dictateBtn')?.classList.remove('on');
-      setStatus('Live conversation off','ok');
-      return;
+      try{bridge.stopListening()}catch(_){}stopLiveAudio();liveSpeaking=false;sendingVoiceTurn=false;
+      setStatus('Live conversation off','ok');syncUi();return;
     }
-    setStatus('Live conversation on - speak normally','ok');
-    startListeningSoon(120);
+    setStatus('Live conversation on — just speak','ok');syncUi();startListeningSoon(120);
   }
 
   function latestAssistantText(){
-    try{
-      const t=current();
-      const msgs=t?.messages||[];
-      for(let i=msgs.length-1;i>=0;i--)if(msgs[i]?.role==='assistant'&&msgs[i]?.text)return String(msgs[i].text);
-    }catch(_){}
+    try{const t=current(),msgs=t?.messages||[];for(let i=msgs.length-1;i>=0;i--)if(msgs[i]?.role==='assistant'&&msgs[i]?.text)return String(msgs[i].text)}catch(_){}
     return '';
   }
 
   const baseSend=send;
   send=async function(){
-    const text=$('#prompt')?.value?.trim()||'';
-    if(!busy&&!selectedImage&&!selectedFile&&visualIntent(text)){
-      const s=readStatus();
-      if(s.ready){
-        const frame=captureWearable(false);
-        if(frame)selectImage(frame,'ORDRO EP6 Plus');
-      }else{
-        connectWearable();
-        setStatus('EP6 must connect before I can see it.','busy');
-        if(liveTalk)startListeningSoon(1200);
-        return;
-      }
+    if(busy)return;
+    const input=$('#prompt'),text=input?.value?.trim()||'';
+    const shouldAttachLive=wearable.ready&&(liveCameraOpen||visualIntent(text));
+    if(shouldAttachLive&&!selectedImage&&!selectedFile){
+      let frame=(Date.now()-lastLiveFrameAt<900)?lastLiveFrame:'';
+      if(!frame)frame=captureWearable(false);
+      if(frame)selectImage(frame,'ORDRO EP6 Plus live frame');
+    }else if(visualIntent(text)&&!wearable.ready&&!selectedImage&&!selectedFile){
+      showLiveCamera();setStatus('EP6 must connect before Agent can see it.','busy');return;
     }
     const talkThisTurn=liveTalk;
-    const savedVoice=voiceOn;
-    if(talkThisTurn)voiceOn=false;
-    try{await baseSend()}
-    finally{if(talkThisTurn)voiceOn=savedVoice}
+    const savedVoice=voiceOn;voiceOn=false;
+    try{await baseSend()}finally{voiceOn=savedVoice}
     if(talkThisTurn&&liveTalk){
-      const reply=latestAssistantText();
-      if(reply)await speakLive(reply);
-      startListeningSoon(250);
+      const reply=latestAssistantText();if(reply)await speakLive(reply);
+      sendingVoiceTurn=false;startListeningSoon(260);
     }
   };
   $('#sendBtn').onclick=send;
 
-  openCamera=async function(){
-    const s=readStatus();
-    if(s.ready){
-      if(!captureWearable(true))setStatus('EP6 is connected but no frame is available yet','error');
-      return;
-    }
-    connectWearable();
-  };
-  $('#cameraBtn').onclick=openCamera;
+  // The EP6 attachment opens LIVE mode. It never falls back to the Android camera.
+  openCamera=showLiveCamera;
+  $('#cameraBtn').onclick=e=>{e.preventDefault();e.stopPropagation();showLiveCamera()};
 
   const baseLoadCapabilities=loadCapabilities;
   loadCapabilities=async function(){
     await baseLoadCapabilities();
-    const box=$('#liveTools');
-    if(!box)return;
+    const box=$('#liveTools');if(!box)return;
     const s=readStatus(),n=readNetwork();
-    const card=document.createElement('div');
-    card.className='toolCard';
-    card.innerHTML='<div class="toolName">ORDRO EP6 Plus wearable camera</div><div class="toolState '+(s.ready?'':'connect')+'">'+(s.ready?'Live':'Not live - '+esc(wearableLabel(s)))+'</div><div class="toolReason">EP6 video uses its local Wi-Fi only. '+esc(networkLabel())+' carries Agent 1.0 Internet traffic.</div>';
+    const card=document.createElement('div');card.className='toolCard';
+    card.innerHTML='<div class="toolName">ORDRO EP6 Plus live camera</div><div class="toolState '+(s.ready?'':'connect')+'">'+(s.ready?'● Live':'○ '+esc(wearableLabel(s)))+'</div><div class="toolReason">EP6 video stays on local Wi-Fi. '+esc(networkLabel())+' carries Agent Internet traffic.</div>';
     box.prepend(card);
-    if(Object.keys(n).length){
-      const net=document.createElement('div');net.className='toolCard';
-      net.innerHTML='<div class="toolName">Split network routing</div><div class="toolState">'+esc(networkLabel())+'</div><div class="toolReason">Camera Wi-Fi remains local while cloud traffic uses a validated Internet connection.</div>';
-      box.prepend(net);
-    }
+    if(Object.keys(n).length){const net=document.createElement('div');net.className='toolCard';net.innerHTML='<div class="toolName">Split network routing</div><div class="toolState">'+esc(networkLabel())+'</div><div class="toolReason">USB Ethernet is preferred, then cellular, then validated Internet Wi-Fi.</div>';box.prepend(net)}
   };
 
-  try{nativeSpeech=!!bridge.isAvailable()}catch(_){nativeSpeech=false}
-  if(nativeSpeech){
-    const mic=$('#dictateBtn');
-    if(mic){
-      mic.style.display='';
-      mic.onclick=()=>{
-        if(liveTalk){toggleLiveTalk();return}
-        try{bridge.startListening();setStatus('Listening...','busy');mic.classList.add('on')}
-        catch(_){setStatus('Voice input unavailable','error')}
-      };
+  // Native speech is now continuous conversation rather than one-shot dictation.
+  window.addEventListener('eara-native-speech',e=>{
+    const d=e.detail||{};
+    if(d.type==='result'&&d.final&&d.text){
+      if(liveTalk){
+        sendingVoiceTurn=true;clearRestart();
+        const p=$('#prompt');if(p){p.value=String(d.text).trim();autoSize();p.focus()}
+        if(liveCameraOpen&&wearable.ready){const frame=(Date.now()-lastLiveFrameAt<900)?lastLiveFrame:captureWearable(false);if(frame)selectImage(frame,'ORDRO EP6 Plus live frame')}
+        setTimeout(()=>send(),60);
+      }else{
+        const p=$('#prompt');if(p){p.value=(p.value.trim()?p.value.trim()+' ':'')+String(d.text).trim();autoSize();p.focus()}
+      }
     }
-    window.addEventListener('eara-native-speech',e=>{
-      const d=e.detail||{};
-      if(d.type==='result'&&d.final&&d.text){
-        const p=$('#prompt');
-        if(p){
-          if(liveTalk)p.value=String(d.text).trim();
-          else p.value=(p.value.trim()?p.value.trim()+' ':'')+String(d.text).trim();
-          autoSize();p.focus();
-          if(liveTalk)setTimeout(()=>send(),80);
-        }
-      }
-      if(d.type==='end'||d.type==='error'){
-        $('#dictateBtn')?.classList.remove('on');
-        if(!liveTalk&&!busy)setStatus(d.type==='error'?'Voice input unavailable':'Ready',d.type==='error'?'error':'ok');
-      }
-    });
-  }
+    if((d.type==='end'||d.type==='error')&&liveTalk&&!sendingVoiceTurn&&!liveSpeaking&&!busy)startListeningSoon(d.type==='error'?500:220);
+  });
 
   window.addEventListener('eara-native-wearable',e=>applyStatus(e.detail||{}));
-  window.addEventListener('eara-native-network',()=>{if(!busy)setStatus(networkLabel(),'ok')});
-  addTopButtons();
-  ensureLiveCameraUi();
-  setTimeout(()=>{
-    try{if(typeof bridge.refreshWearableCamera==='function')bridge.refreshWearableCamera()}catch(_){}
-    applyStatus(readStatus());
-  },650);
+  window.addEventListener('eara-native-network',()=>{if(!busy&&!liveTalk)setStatus(networkLabel(),'ok');refreshLiveCamera()});
+
+  injectV40Styles();installHistoryFix();ensureLiveCameraUi();addLiveCameraButton();ensurePhoneCameraButton();syncUi();
+  setTimeout(()=>{installHistoryFix();ensurePhoneCameraButton();addLiveCameraButton();syncUi();try{if(typeof bridge.refreshWearableCamera==='function')bridge.refreshWearableCamera()}catch(_){}applyStatus(readStatus())},500);
+  setTimeout(()=>{installHistoryFix();ensurePhoneCameraButton();syncUi()},1400);
+
+  window.AgentV40={
+    version:'40',
+    toggleLiveTalk,
+    showLiveCamera,
+    closeLiveCamera,
+    connectEP6:connectWearable,
+    captureEP6:()=>captureWearable(false),
+    getStatus:()=>readStatus(),
+    getNetwork:()=>readNetwork(),
+    isLiveTalk:()=>liveTalk,
+    isLiveCamera:()=>liveCameraOpen
+  };
 })();
