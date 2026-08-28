@@ -1,0 +1,123 @@
+name: Build EARA v43 Stream Microphone APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "eara-android-app/**"
+      - "handsfree.js"
+      - "app.js"
+      - "visit.js"
+      - "index.html"
+      - "sw.js"
+      - "scripts/test-v43-stream-listener.js"
+      - ".github/workflows/build-eara-v43-stream-mic-apk.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eara-v43-stream-microphone
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+
+      - name: Verify continuous microphone and wake-word behavior
+        run: |
+          set -euo pipefail
+          node --check handsfree.js
+          node --check app.js
+          node --check visit.js
+          node scripts/test-v43-stream-listener.js
+          grep -q "v43 continuous stream microphone" handsfree.js
+          grep -q "StreamSpeechRecognition" handsfree.js
+          grep -q "channelCount:1" app.js
+          ! grep -q "audio:window.EARANative?false" app.js
+          ! grep -q "^[[:space:]]*configureNativeSpeech();" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
+          grep -q "versionCode = 43" eara-android-app/app/build.gradle.kts
+          echo EARA_V43_STREAM_MIC_SOURCE=PASS
+
+      - name: Wait for v43 frontend deployment
+        run: |
+          set -euo pipefail
+          ok=0
+          for i in $(seq 1 40); do
+            voice=$(curl -fsSL --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/handsfree.js?build=$GITHUB_SHA" || true)
+            media=$(curl -fsSL --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/app.js?build=$GITHUB_SHA" || true)
+            if grep -q "v43 continuous stream microphone" <<<"$voice" && grep -q "channelCount:1" <<<"$media"; then
+              ok=1
+              break
+            fi
+            sleep 5
+          done
+          test "$ok" -eq 1
+          echo EARA_V43_FRONTEND_LIVE=PASS
+
+      - name: Verify transcription service
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs=require('fs');
+          const rate=16000,samples=rate/2,buf=Buffer.alloc(44+samples*2);
+          buf.write('RIFF',0);buf.writeUInt32LE(36+samples*2,4);buf.write('WAVEfmt ',8);
+          buf.writeUInt32LE(16,16);buf.writeUInt16LE(1,20);buf.writeUInt16LE(1,22);
+          buf.writeUInt32LE(rate,24);buf.writeUInt32LE(rate*2,28);buf.writeUInt16LE(2,32);
+          buf.writeUInt16LE(16,34);buf.write('data',36);buf.writeUInt32LE(samples*2,40);
+          fs.writeFileSync('/tmp/eara-v43-test.wav',buf);
+          NODE
+          code=$(curl -sS --max-time 90 -o /tmp/transcribe.json -w '%{http_code}'             -H 'Origin: https://jesuscruz1984.github.io'             -F 'audio=@/tmp/eara-v43-test.wav;type=audio/wav'             'https://eara-pwa.jesuscruz1984.workers.dev/transcribe')
+          test "$code" = 200
+          node -e "const j=require('/tmp/transcribe.json');if(typeof j.text!=='string')process.exit(1)"
+          echo EARA_V43_TRANSCRIPTION_SERVICE=PASS
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK 36
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.1.0"
+          cache-provider: basic
+
+      - name: Build EARA v43 APK
+        working-directory: eara-android-app
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify and name APK
+        run: |
+          set -euo pipefail
+          APK="eara-android-app/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging-v43.txt
+          grep -q "package: name='com.eara.ai'" apk-badging-v43.txt
+          grep -q "versionCode='43'" apk-badging-v43.txt
+          grep -q "versionName='43.0-stream-microphone'" apk-badging-v43.txt
+          cp "$APK" EARA-v43-stream-microphone.apk
+          sha256sum EARA-v43-stream-microphone.apk > EARA-v43-stream-microphone.apk.sha256
+          echo EARA_V43_APK_METADATA=PASS
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: EARA-v43-stream-microphone
+          path: |
+            EARA-v43-stream-microphone.apk
+            EARA-v43-stream-microphone.apk.sha256
+            apk-badging-v43.txt
+          if-no-files-found: error
+          retention-days: 30
