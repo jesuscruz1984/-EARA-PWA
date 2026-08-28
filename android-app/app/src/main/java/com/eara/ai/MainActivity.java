@@ -2,17 +2,14 @@ package com.eara.ai;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.MediaStore;
 import android.provider.Settings;
 import android.speech.RecognitionListener;
 import android.speech.RecognizerIntent;
@@ -38,8 +35,6 @@ import android.widget.Toast;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -47,10 +42,11 @@ import java.util.Locale;
 
 public class MainActivity extends Activity {
     private static final String TAG = "Agent10";
-    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/?apk=36";
+    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/agent-1.0/?apk=38";
     private static final String APP_HOST = "jesuscruz1984.github.io";
     private static final int PERMISSION_REQUEST = 4201;
     private static final int FILE_CHOOSER_REQUEST = 4202;
+    private static final int SAVE_FILE_REQUEST = 4203;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private FrameLayout root;
@@ -61,6 +57,8 @@ public class MainActivity extends Activity {
     private Intent speechIntent;
     private PermissionRequest pendingWebPermission;
     private ValueCallback<Uri[]> pendingFileChooser;
+    private byte[] pendingSaveBytes;
+    private String pendingSaveName;
     private boolean nativeListening;
     private boolean appInitialized;
     private OrdroCameraBridge ordroCamera;
@@ -71,6 +69,7 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(Color.rgb(250, 250, 250));
         getWindow().setNavigationBarColor(Color.WHITE);
 
+        // Keep the exact first-draw pattern from v35, which opened on the physical phone.
         root = new FrameLayout(this);
         root.setBackgroundColor(Color.WHITE);
 
@@ -107,7 +106,6 @@ public class MainActivity extends Activity {
                     ViewGroup.LayoutParams.MATCH_PARENT));
 
             configureWebView();
-            webView.clearCache(true);
             webView.loadUrl(APP_URL);
             mainHandler.postDelayed(this::initializeOptionalServices, 500);
         } catch (Throwable t) {
@@ -159,17 +157,19 @@ public class MainActivity extends Activity {
     }
 
     private void configureWebView() {
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        // Keep production startup identical to the known-opening v35 path.
+        WebView.setWebContentsDebuggingEnabled(false);
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
         settings.setAllowFileAccess(false);
+        // Required so Android content:// URIs returned by the system picker can be read.
         settings.setAllowContentAccess(true);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " Agent-1.0-Android/36 ORDRO-EP6");
+        settings.setUserAgentString(settings.getUserAgentString() + " Agent-1.0-Android/38 ORDRO-EP6");
 
         webView.addJavascriptInterface(new EaraNativeBridge(), "EARANative");
         webView.setWebViewClient(new WebViewClient() {
@@ -226,9 +226,9 @@ public class MainActivity extends Activity {
                     chooser.addCategory(Intent.CATEGORY_OPENABLE);
                     startActivityForResult(chooser, FILE_CHOOSER_REQUEST);
                     return true;
-                } catch (Exception e) {
-                    Log.e(TAG, "Could not open Android file picker", e);
-                    pendingFileChooser.onReceiveValue(null);
+                } catch (Throwable t) {
+                    Log.e(TAG, "Could not open Android file picker", t);
+                    if (pendingFileChooser != null) pendingFileChooser.onReceiveValue(null);
                     pendingFileChooser = null;
                     Toast.makeText(MainActivity.this, "Could not open file picker.", Toast.LENGTH_SHORT).show();
                     return false;
@@ -253,6 +253,26 @@ public class MainActivity extends Activity {
             if (pendingFileChooser != null) {
                 pendingFileChooser.onReceiveValue(result);
                 pendingFileChooser = null;
+            }
+            return;
+        }
+
+        if (requestCode == SAVE_FILE_REQUEST) {
+            byte[] bytes = pendingSaveBytes;
+            String name = pendingSaveName;
+            pendingSaveBytes = null;
+            pendingSaveName = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null && bytes != null) {
+                Uri uri = data.getData();
+                try (OutputStream out = getContentResolver().openOutputStream(uri, "w")) {
+                    if (out == null) throw new IllegalStateException("Could not open selected file");
+                    out.write(bytes);
+                    out.flush();
+                    Toast.makeText(this, "Saved " + (name == null ? "document" : name), Toast.LENGTH_LONG).show();
+                } catch (Throwable t) {
+                    Log.e(TAG, "Could not save generated file", t);
+                    Toast.makeText(this, "Could not save document.", Toast.LENGTH_LONG).show();
+                }
             }
             return;
         }
@@ -442,48 +462,28 @@ public class MainActivity extends Activity {
         });
     }
 
-    private void saveGeneratedFile(String filename, String mime, String base64Data) {
+    private void beginSaveGeneratedFile(String filename, String mime, String base64Data) {
         runOnUiThread(() -> {
-            String safe = (filename == null || filename.trim().isEmpty()) ? "Agent-Document" : filename.replaceAll("[\\\\/:*?\"<>|]", "-");
-            String type = (mime == null || mime.isEmpty()) ? "application/octet-stream" : mime;
-            Uri savedUri = null;
             try {
+                String safe = (filename == null || filename.trim().isEmpty())
+                        ? "Agent-Document"
+                        : filename.replaceAll("[\\\\/:*?\"<>|]", "-");
+                String type = (mime == null || mime.trim().isEmpty()) ? "application/octet-stream" : mime;
                 byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
-                if (Build.VERSION.SDK_INT >= 29) {
-                    ContentValues values = new ContentValues();
-                    values.put(MediaStore.Downloads.DISPLAY_NAME, safe);
-                    values.put(MediaStore.Downloads.MIME_TYPE, type);
-                    values.put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Agent1");
-                    values.put(MediaStore.Downloads.IS_PENDING, 1);
-                    savedUri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
-                    if (savedUri == null) throw new IllegalStateException("Downloads insert failed");
-                    try (OutputStream out = getContentResolver().openOutputStream(savedUri)) {
-                        if (out == null) throw new IllegalStateException("Downloads output stream failed");
-                        out.write(bytes);
-                    }
-                    ContentValues ready = new ContentValues();
-                    ready.put(MediaStore.Downloads.IS_PENDING, 0);
-                    getContentResolver().update(savedUri, ready, null, null);
-                } else {
-                    File dir = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), "Agent1");
-                    if (!dir.exists() && !dir.mkdirs()) throw new IllegalStateException("Could not create download folder");
-                    File file = new File(dir, safe);
-                    try (FileOutputStream out = new FileOutputStream(file)) { out.write(bytes); }
-                }
-                Toast.makeText(this, "Saved to Downloads/Agent1: " + safe, Toast.LENGTH_LONG).show();
-                if (savedUri != null) {
-                    try {
-                        Intent view = new Intent(Intent.ACTION_VIEW);
-                        view.setDataAndType(savedUri, type);
-                        view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
-                        startActivity(view);
-                    } catch (Exception ignored) {
-                        // The file is saved even when no PDF/Word viewer is installed.
-                    }
-                }
+                if (bytes.length == 0) throw new IllegalArgumentException("Empty document");
+
+                pendingSaveBytes = bytes;
+                pendingSaveName = safe;
+                Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT);
+                save.addCategory(Intent.CATEGORY_OPENABLE);
+                save.setType(type);
+                save.putExtra(Intent.EXTRA_TITLE, safe);
+                startActivityForResult(save, SAVE_FILE_REQUEST);
             } catch (Throwable t) {
-                Log.e(TAG, "Could not save generated file", t);
-                Toast.makeText(this, "Could not save " + safe, Toast.LENGTH_LONG).show();
+                pendingSaveBytes = null;
+                pendingSaveName = null;
+                Log.e(TAG, "Could not prepare generated file", t);
+                Toast.makeText(this, "Could not prepare document for saving.", Toast.LENGTH_LONG).show();
             }
         });
     }
@@ -542,7 +542,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void saveBase64File(String filename, String mime, String base64Data) {
-            saveGeneratedFile(filename, mime, base64Data);
+            beginSaveGeneratedFile(filename, mime, base64Data);
         }
     }
 
@@ -565,6 +565,8 @@ public class MainActivity extends Activity {
             pendingFileChooser.onReceiveValue(null);
             pendingFileChooser = null;
         }
+        pendingSaveBytes = null;
+        pendingSaveName = null;
         if (speechRecognizer != null) {
             speechRecognizer.destroy();
             speechRecognizer = null;
