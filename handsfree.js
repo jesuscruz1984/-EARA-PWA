@@ -1,4 +1,4 @@
-// EARA v27 noise-aware hands-free wake phrase: Eara
+// EARA v41 quiet Android listener + noise-aware hands-free wake phrase: Eara
 (()=>{
   const nativeSpeech=window.EARANative&&typeof window.EARANative.startListening==='function'?window.EARANative:null;
   function NativeSpeechRecognition(){
@@ -6,7 +6,7 @@
     const emitResult=(text,isFinal)=>{const alt={transcript:String(text||'')},result=[alt];result.isFinal=!!isFinal;const results=[result];this.onresult?.({resultIndex:0,results})};
     this._listener=e=>{const d=e.detail||{};if(!this._started)return;if(d.type==='result')emitResult(d.text,d.final);else if(d.type==='error')this.onerror?.({error:d.error||'no-speech'});else if(d.type==='end'){this._started=false;this.onend?.()}};
     window.addEventListener('eara-native-speech',this._listener);
-    this.start=()=>{if(this._started)return;this._started=true;this.onstart?.();try{nativeSpeech.startListening()}catch(_){this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.()}};
+    this.start=()=>{if(this._started)return;this._started=true;this.onstart?.();try{const active=typeof nativeSpeech.isListening==='function'&&nativeSpeech.isListening();if(!active)nativeSpeech.startListening()}catch(_){this._started=false;this.onerror?.({error:'audio-capture'});this.onend?.()}};
     this.abort=()=>{if(!this._started)return;try{nativeSpeech.stopListening()}catch(_){}this._started=false};
     this.stop=this.abort;
   }
@@ -55,14 +55,14 @@
   function appendCommand(segment){const s=String(segment||'').trim();if(!s)return;armActive();if(!commandBuffer)commandBuffer=s;else if(!commandBuffer.toLowerCase().endsWith(s.toLowerCase()))commandBuffer+=' '+s;clearTimeout(commandTimer);commandTimer=setTimeout(submitCommand,COMMAND_SILENCE_MS);setState('Eara active — listening…');setBadge('Eara Active')}
   function submitCommand(){clearTimeout(commandTimer);commandTimer=null;if(!commandBuffer||processing||speaking){if(commandBuffer)commandTimer=setTimeout(submitCommand,220);return}const cmd=commandBuffer.trim();commandBuffer='';if(!cmd)return;processing=true;armActive();try{recognition?.abort()}catch(_){}setState('Thinking…');setBadge('Thinking');Promise.resolve(window.askAI?.(cmd)).catch(()=>{}).finally(()=>{processing=false;if(active)armActive();if(handsFree&&!speaking&&micAvailable())scheduleRestart(80)})}
 
-  function scheduleRestart(delay=120){clearTimeout(restartTimer);if(!handsFree||speaking||processing||!recognition||!micAvailable())return;const backoff=Math.min(1800,speechErrorCount*250);restartTimer=setTimeout(()=>{if(!handsFree||speaking||processing||starting||!micAvailable())return;try{starting=true;recognition.start()}catch(_){starting=false;speechErrorCount=Math.min(speechErrorCount+1,6);scheduleRestart(300)}},Math.max(delay,backoff))}
+  function scheduleRestart(delay=120){clearTimeout(restartTimer);if(!handsFree||speaking||processing||!recognition||!micAvailable())return;const backoff=Math.min(6000,speechErrorCount*900);restartTimer=setTimeout(()=>{if(!handsFree||speaking||processing||starting||!micAvailable())return;try{starting=true;recognition.start()}catch(_){starting=false;speechErrorCount=Math.min(speechErrorCount+1,7);scheduleRestart(1200)}},Math.max(delay,backoff))}
   function pickTranscript(result){if(!result)return '';if(!active){for(let i=0;i<Math.min(result.length,5);i++){const t=String(result[i]?.transcript||'').trim();if(WAKE.test(t))return t}}return String(result[0]?.transcript||'').trim()}
   function setupRecognition(){
     if(!SR||recognition)return;recognition=new SR();recognition.continuous=false;recognition.interimResults=true;recognition.lang='en-US';recognition.maxAlternatives=5;
-    recognition.onstart=()=>{starting=false;speechErrorCount=0;if(handsFree&&!speaking&&!processing){setState(idleState());updateSpeakerButton();setBadge(idleBadge())}};
-    recognition.onresult=e=>{if(speaking||processing)return;for(let i=e.resultIndex;i<e.results.length;i++){const res=e.results[i],heard=pickTranscript(res);if(!heard)continue;const wake=heard.match(WAKE);if(wake){armActive();if(!res.isFinal){setState('Eara heard — I’m listening…');setBadge('Eara Active');continue}const rest=String(wake[1]||'').trim();if(rest)appendCommand(rest);else{setState('Yes? I’m listening…');setBadge('Eara Active')}continue}if(!active)continue;armActive();if(res.isFinal)appendCommand(heard);else{setState('Eara active — listening…');setBadge('Eara Active')}}};
-    recognition.onerror=e=>{starting=false;const err=String(e?.error||'');if(err==='not-allowed'||err==='service-not-allowed'){if(micAvailable()){speechErrorCount=Math.min(speechErrorCount+1,6);setState('Reconnecting listener…');setBadge('Reconnecting…');scheduleRestart(450)}else{handsFree=false;setState('Microphone permission required.');setBadge('Mic Permission')}return}if(err==='audio-capture'&&!micAvailable()){setState('Microphone unavailable.');return}speechErrorCount=Math.min(speechErrorCount+1,6);if(!speaking&&!processing)scheduleRestart(err==='no-speech'?70:250)};
-    recognition.onend=()=>{starting=false;if(handsFree&&!speaking&&!processing)scheduleRestart(active?50:120)};
+    recognition.onstart=()=>{starting=false;if(handsFree&&!speaking&&!processing){setState(idleState());updateSpeakerButton();setBadge(idleBadge())}};
+    recognition.onresult=e=>{if(speaking||processing)return;speechErrorCount=0;for(let i=e.resultIndex;i<e.results.length;i++){const res=e.results[i],heard=pickTranscript(res);if(!heard)continue;const wake=heard.match(WAKE);if(wake){armActive();if(!res.isFinal){setState('Eara heard — I’m listening…');setBadge('Eara Active');continue}const rest=String(wake[1]||'').trim();if(rest)appendCommand(rest);else{setState('Yes? I’m listening…');setBadge('Eara Active')}continue}if(!active)continue;armActive();if(res.isFinal)appendCommand(heard);else{setState('Eara active — listening…');setBadge('Eara Active')}}};
+    recognition.onerror=e=>{starting=false;const err=String(e?.error||'');if(err==='not-allowed'||err==='service-not-allowed'){if(micAvailable()){speechErrorCount=Math.min(speechErrorCount+1,7);setState('Reconnecting listener…');setBadge('Reconnecting…');scheduleRestart(1800)}else{handsFree=false;setState('Microphone permission required.');setBadge('Mic Permission')}return}if(err==='audio-capture'&&!micAvailable()){setState('Microphone unavailable.');return}speechErrorCount=Math.min(speechErrorCount+1,7);if(!speaking&&!processing)scheduleRestart(err==='no-speech'?1200:1800)};
+    recognition.onend=()=>{starting=false;if(handsFree&&!speaking&&!processing)scheduleRestart(active?350:1200)};
   }
 
   function localSpeak(text,onDone){
@@ -109,3 +109,4 @@
   document.addEventListener('pointerdown',()=>{if(speakerEnabled&&!audioPrimed)primeAudio();recoverListening()},{capture:true});
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){recoverListening();if(speakerEnabled)primeAudio()}});window.addEventListener('focus',recoverListening);updateSpeakerButton();
 })();
+
