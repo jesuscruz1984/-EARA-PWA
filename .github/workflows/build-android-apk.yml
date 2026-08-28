@@ -113,7 +113,7 @@ jobs:
           test -s "$APK"
           "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "package: name='com.eara.ai'" "$GITHUB_WORKSPACE/apk-badging.txt"
-          grep -q "versionCode='36'" "$GITHUB_WORKSPACE/apk-badging.txt"
+          grep -q "versionCode='37'" "$GITHUB_WORKSPACE/apk-badging.txt"
           grep -q "launchable-activity: name='com.eara.ai.MainActivity'" "$GITHUB_WORKSPACE/apk-badging.txt"
           echo 'APK_METADATA=PASS'
 
@@ -123,13 +123,13 @@ jobs:
 
           APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
           EMULATOR_LOG="$GITHUB_WORKSPACE/emulator.log"
-          SCREENSHOT="$GITHUB_WORKSPACE/agent-v36-final.png"
-          PHONE_SCREENSHOT="$GITHUB_WORKSPACE/agent-v36-phone-camera.png"
-          CRASH_LOG="$GITHUB_WORKSPACE/agent-v36-logcat.txt"
-          ACTIVITY_LOG="$GITHUB_WORKSPACE/agent-v36-activity.txt"
-          WINDOW_LOG="$GITHUB_WORKSPACE/agent-v36-window.txt"
-          PACKAGE_LOG="$GITHUB_WORKSPACE/agent-v36-package.txt"
-          CDP_LOG="$GITHUB_WORKSPACE/agent-v36-cdp.txt"
+          SCREENSHOT="$GITHUB_WORKSPACE/agent-v37-final.png"
+          PHONE_SCREENSHOT="$GITHUB_WORKSPACE/agent-v37-phone-camera.png"
+          CRASH_LOG="$GITHUB_WORKSPACE/agent-v37-logcat.txt"
+          ACTIVITY_LOG="$GITHUB_WORKSPACE/agent-v37-activity.txt"
+          WINDOW_LOG="$GITHUB_WORKSPACE/agent-v37-window.txt"
+          PACKAGE_LOG="$GITHUB_WORKSPACE/agent-v37-package.txt"
+          CDP_LOG="$GITHUB_WORKSPACE/agent-v37-cdp.txt"
           AVD_NAME="eara_pixel6_api35"
           export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd"
           mkdir -p "$ANDROID_AVD_HOME"
@@ -171,8 +171,8 @@ jobs:
           adb install -r -g "$APK" | tee "$GITHUB_WORKSPACE/adb-install.txt"
           grep -q 'Success' "$GITHUB_WORKSPACE/adb-install.txt"
           adb shell dumpsys package com.eara.ai > "$PACKAGE_LOG"
-          grep -q 'versionCode=36' "$PACKAGE_LOG"
-          echo 'APK_INSTALL_V36=PASS'
+          grep -q 'versionCode=37' "$PACKAGE_LOG"
+          echo 'APK_INSTALL_V37=PASS'
 
           adb logcat -c || true
           adb shell am force-stop com.eara.ai || true
@@ -195,7 +195,7 @@ jobs:
           adb forward tcp:9222 "localabstract:$SOCKET"
 
           cat > /tmp/cdp_test.py <<'PY'
-          import base64,json,subprocess,time,urllib.request,websocket,sys
+          import base64,json,subprocess,time,urllib.request,websocket,sys,os
           def sh(*args,check=True):
               p=subprocess.run(args,text=True,capture_output=True)
               if check and p.returncode: raise RuntimeError(p.stdout+p.stderr)
@@ -248,14 +248,15 @@ jobs:
 
           ev("document.querySelector('#phoneCameraBtn').click();true")
           wait("document.querySelector('#cameraModal').classList.contains('show') && document.querySelector('#cameraVideo').videoWidth>0",25)
-          subprocess.run('adb exec-out screencap -p > "$GITHUB_WORKSPACE/agent-v36-phone-camera.png"',shell=True,check=True,executable='/bin/bash')
+          out=os.path.join(os.environ['GITHUB_WORKSPACE'],'agent-v37-phone-camera.png')
+          with open(out,'wb') as f: subprocess.run(['adb','exec-out','screencap','-p'],stdout=f,check=True)
           cap=ev("(()=>{captureCamera();return selectedImage.startsWith('data:image/jpeg')})()")
           assert cap is True
           print('PHONE_CAMERA_PREVIEW_AND_CAPTURE=PASS')
 
           stat=json.loads(ev("EARANative.getWearableCameraStatus()"))
           assert 'supported' in stat
-          click=ev("(()=>{document.querySelector('#attachments').classList.add('show');document.querySelector('#cameraBtn').click();return true})()")
+          ev("(()=>{document.querySelector('#attachments').classList.add('show');document.querySelector('#cameraBtn').click();return true})()")
           time.sleep(1)
           stat2=json.loads(ev("EARANative.getWearableCameraStatus()"))
           assert stat2.get('state') not in ['error','unsupported'],stat2
@@ -271,7 +272,7 @@ jobs:
           assert any(s.startswith('PK') for s in result['sigs']),result
           print('LIVE_PDF_AND_WORD_GENERATION=PASS')
 
-          ev("(()=>{addMessage({role:'assistant',text:'v36 generated files',files:__v36doc.files,toolsUsed:['pdf','word']});return true})()")
+          ev("(()=>{addMessage({role:'assistant',text:'v37 generated files',files:__v36doc.files,toolsUsed:['pdf','word']});return true})()")
           wait("document.querySelectorAll('a[download]').length>=2",10)
           labels2=ev("Array.from(document.querySelectorAll('a[download]')).map(a=>a.textContent)")
           assert 'Save PDF' in labels2 and 'Save Word' in labels2,labels2
@@ -303,27 +304,27 @@ jobs:
             grep -n -B10 -A50 'Process: com.eara.ai' "$CRASH_LOG"; exit 1
           fi
           echo 'NO_AGENT_FATAL_CRASH=PASS'
-          echo 'AGENT_V36_FULL_INTERACTION_TEST=PASS'
+          echo 'AGENT_V37_FULL_INTERACTION_TEST=PASS'
 
-      - name: Prepare verified v36 APK
+      - name: Prepare verified v37 APK
         run: |
-          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v36.apk
-          sha256sum Agent-1.0-ORDRO-EP6-v36.apk > Agent-1.0-ORDRO-EP6-v36.apk.sha256
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v37.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v37.apk > Agent-1.0-ORDRO-EP6-v37.apk.sha256
 
-      - name: Upload verified v36 APK and evidence
+      - name: Upload verified v37 APK and evidence
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-ORDRO-EP6-v36-fully-tested
+          name: Agent-1.0-ORDRO-EP6-v37-fully-tested
           path: |
-            Agent-1.0-ORDRO-EP6-v36.apk
-            Agent-1.0-ORDRO-EP6-v36.apk.sha256
-            agent-v36-final.png
-            agent-v36-phone-camera.png
-            agent-v36-logcat.txt
-            agent-v36-activity.txt
-            agent-v36-window.txt
-            agent-v36-package.txt
-            agent-v36-cdp.txt
+            Agent-1.0-ORDRO-EP6-v37.apk
+            Agent-1.0-ORDRO-EP6-v37.apk.sha256
+            agent-v37-final.png
+            agent-v37-phone-camera.png
+            agent-v37-logcat.txt
+            agent-v37-activity.txt
+            agent-v37-window.txt
+            agent-v37-package.txt
+            agent-v37-cdp.txt
             apk-badging.txt
             adb-install.txt
             emulator.log
@@ -332,19 +333,19 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Upload v36 diagnostics on failure
+      - name: Upload v37 diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: Agent-1.0-v36-failure-diagnostics
+          name: Agent-1.0-v37-failure-diagnostics
           path: |
-            agent-v36-final.png
-            agent-v36-phone-camera.png
-            agent-v36-logcat.txt
-            agent-v36-activity.txt
-            agent-v36-window.txt
-            agent-v36-package.txt
-            agent-v36-cdp.txt
+            agent-v37-final.png
+            agent-v37-phone-camera.png
+            agent-v37-logcat.txt
+            agent-v37-activity.txt
+            agent-v37-window.txt
+            agent-v37-package.txt
+            agent-v37-cdp.txt
             apk-badging.txt
             adb-install.txt
             emulator.log
