@@ -10,6 +10,7 @@ on:
       - "agent-wrapper-v2.js"
       - "agent-wrapper-v3.js"
       - "agent-wrapper-v4.js"
+      - "agent-wrapper-v5.js"
       - "wrangler.jsonc"
       - ".github/workflows/deploy-worker.yml"
   workflow_dispatch:
