@@ -1,6 +1,16 @@
 /* Agent 1.0 native ORDRO EP6 Plus integration.
    Loaded only as an enhancement: browser/PWA behavior remains unchanged. */
 (function(){
+  // Preserve the normal phone-camera function before the wearable integration
+  // replaces openCamera. The v36 UI exposes both Phone camera and EP6 camera.
+  window.AgentPhoneCamera=window.openCamera;
+
+  // Load interaction/document fixes for both PWA and APK builds. This is a new
+  // same-origin asset so older cached index.html files still receive the fix.
+  if(!document.getElementById('agentUpgradeV36')){
+    const s=document.createElement('script');s.id='agentUpgradeV36';s.src='upgrade-v36.js?v=36';s.async=true;document.head.appendChild(s);
+  }
+
   const bridge=window.EARANative;
   if(!bridge||typeof bridge.getWearableCameraStatus!=='function')return;
 
@@ -26,7 +36,7 @@
     if(camera){
       camera.title=wearable.ready?'ORDRO EP6 Plus camera ready':'Connect ORDRO EP6 Plus';
       const label=camera.querySelector('small');
-      if(label)label.textContent=wearable.ready?'EP6 camera':'Wearable camera';
+      if(label)label.textContent='EP6 camera';
     }
     if(!busy&&wearable.state!=='disconnected')setStatus(wearableLabel(wearable),wearable.ready?'ok':(wearable.state==='stream-error'?'error':'busy'));
   }
