@@ -2,6 +2,7 @@ import app from './agent-wrapper-v3.js';
 
 const NEMOTRON='@cf/nvidia/nemotron-3-120b-a12b';
 const GLM='@cf/zai-org/glm-4.7-flash';
+const FLUX='@cf/black-forest-labs/flux-1-schnell';
 const ORIGIN='https://jesuscruz1984.github.io';
 function outText(r){
   if(typeof r==='string')return r.trim();
@@ -15,6 +16,7 @@ function outText(r){
 function clean(s){return String(s||'').replace(/<\/?(?:a|div|span|p|br|strong|em|h[1-6])\b[^>]*>/gi,' ').replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,'**$1**\n$2').replace(/^\s*#{1,6}\s+(.+)$/gm,'**$1**').replace(/\n{3,}/g,'\n\n').trim()}
 function speech(s){return String(s||'').replace(/https?:\/\/\S+/g,'').replace(/[\*_`#>|]+/g,' ').replace(/\s+/g,' ').trim().slice(0,420)}
 function isWeb(t,f){return !!f||/\b(search|look ?up|lookup|online|internet|web|find|current|latest|website|logo|company info|price|cost|news|today|near me|available|availability|buy|purchase|in stock)\b/i.test(String(t||''))}
+function wantsImage(t){return /\b(generate|create|make|draw|design|render|illustrate)\b[\s\S]{0,55}\b(image|picture|photo|logo|icon|poster|graphic|art|illustration|mockup|wallpaper)\b|\b(image|picture|photo|logo|icon|poster|graphic|art|illustration|mockup|wallpaper)\b[\s\S]{0,45}\b(generate|create|make|draw|design|render)\b/i.test(String(t||''))}
 function cors(origin,base){const h=new Headers(base||{});h.set('Content-Type','application/json; charset=utf-8');h.set('Cache-Control','no-store');if(origin===ORIGIN)h.set('Access-Control-Allow-Origin',ORIGIN);return h}
 async function runHosted(env,system,user,max=1200){
   let last=null;
@@ -51,6 +53,16 @@ async function improveChat(env,body,prior){
     const user=[memory?`RECENT CONVERSATION:\n${memory}`:'',`USER REQUEST:\n${body?.text||''}`].filter(Boolean).join('\n\n');
     const rr=await runHosted(env,system,user,1400);
     return {...prior,text:rr.text,speech:speech(rr.text),model:rr.model,route:'enhanced-backup',agentFallback:true,enhancedBackup:true};
+  }catch(_){return prior}
+}
+async function generateImageFallback(env,body,prior){
+  try{
+    const prompt=String(body?.text||'').trim().slice(0,2048);
+    if(!prompt)return prior;
+    const result=await env.AI.run(FLUX,{prompt,steps:6,seed:Math.floor(Math.random()*2147483646)+1});
+    if(!result?.image)return prior;
+    const image=`data:image/jpeg;base64,${result.image}`;
+    return {...prior,text:'Done — I created the image.',speech:'Done. I created the image.',images:[image],toolsUsed:[...new Set([...(prior?.toolsUsed||[]),'image_generation'])],model:FLUX,route:'workers-ai-image-fallback',agentFallback:true};
   }catch(_){return prior}
 }
 function requestedDocumentFormats(text){
@@ -91,7 +103,8 @@ export default{
     if(!response.ok||!/application\/json/i.test(response.headers.get('Content-Type')||''))return response;
     let data;try{data=await response.json()}catch(_){return response}
     if(data?.pdfCreated)return new Response(JSON.stringify(data),{status:response.status,headers:cors(origin,response.headers)});
-    if(data?.route==='grounded-web-fallback')data=await improveWeb(env,body,data);
+    if(wantsImage(body?.text)&&!(data?.images?.length))data=await generateImageFallback(env,body,data);
+    else if(data?.route==='grounded-web-fallback')data=await improveWeb(env,body,data);
     else if(data?.agentFallback&&!isWeb(body?.text,body?.forceWeb))data=await improveChat(env,body,data);
     return new Response(JSON.stringify(data),{status:response.status,headers:cors(origin,response.headers)});
   }
