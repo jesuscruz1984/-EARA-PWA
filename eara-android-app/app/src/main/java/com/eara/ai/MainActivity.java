@@ -31,7 +31,7 @@ import java.util.Arrays;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
-    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/?apk=42";
+    private static final String APP_URL = "https://jesuscruz1984.github.io/-EARA-PWA/?apk=43";
     private static final String APP_HOST = "jesuscruz1984.github.io";
     private static final int PERMISSION_REQUEST = 4201;
 
@@ -57,7 +57,9 @@ public class MainActivity extends Activity {
         webView = new WebView(this);
         setContentView(webView);
         configureWebView();
-        configureNativeSpeech();
+        // v43 holds one WebView microphone stream and performs segmented cloud
+        // transcription. Do not create/start Android SpeechRecognizer: vendor
+        // implementations can chirp and repeatedly release/reacquire the mic.
         requestRequiredPermissions();
         webView.loadUrl(APP_URL);
     }
@@ -73,7 +75,7 @@ public class MainActivity extends Activity {
         settings.setAllowContentAccess(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        settings.setUserAgentString(settings.getUserAgentString() + " EARA-Android/42 Mic-Owner-Fix");
+        settings.setUserAgentString(settings.getUserAgentString() + " EARA-Android/43 Stream-Microphone");
 
         webView.addJavascriptInterface(new EaraNativeBridge(), "EARANative");
         webView.setWebViewClient(new WebViewClient() {
