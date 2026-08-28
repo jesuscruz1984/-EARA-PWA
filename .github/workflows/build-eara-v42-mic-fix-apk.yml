@@ -1,97 +1,13 @@
-name: Build EARA v42 Microphone Fix APK
+name: EARA v42 Microphone Fix APK (archived)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "eara-android-app/**"
-      - "handsfree.js"
-      - "visit.js"
-      - "index.html"
-      - "sw.js"
-      - ".github/workflows/build-eara-v42-mic-fix-apk.yml"
 
 permissions:
   contents: read
 
-concurrency:
-  group: eara-v42-microphone-fix
-  cancel-in-progress: true
-
 jobs:
-  build:
+  archived:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Verify microphone ownership fixes
-        run: |
-          set -euo pipefail
-          node --check handsfree.js
-          node --check visit.js
-          grep -q "v42 quiet Android listener" handsfree.js
-          grep -q "nativeHandsFreeOwnsMic" visit.js
-          grep -q "pauseNativeVisit" visit.js
-          grep -q "Android microphone ready" visit.js
-          ! grep -q "if (nativeListening) speechRecognizer.cancel()" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          grep -q "5000L" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          grep -q "versionCode = 42" eara-android-app/app/build.gradle.kts
-          echo EARA_V42_MIC_OWNER_SOURCE=PASS
-
-      - name: Wait for v42 frontend deployment
-        run: |
-          set -euo pipefail
-          ok=0
-          for i in $(seq 1 40); do
-            if curl -fsSL --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/visit.js?build=$GITHUB_SHA" | grep -q "v42 field-visit memory"; then
-              ok=1
-              break
-            fi
-            sleep 5
-          done
-          test "$ok" -eq 1
-          echo EARA_V42_FRONTEND_LIVE=PASS
-
-      - uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "9.1.0"
-          cache-provider: basic
-
-      - name: Build EARA v42 APK
-        working-directory: eara-android-app
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Verify and name APK
-        run: |
-          set -euo pipefail
-          APK="eara-android-app/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging-v42.txt
-          grep -q "package: name='com.eara.ai'" apk-badging-v42.txt
-          grep -q "versionCode='42'" apk-badging-v42.txt
-          grep -q "versionName='42.0-mic-owner-fix'" apk-badging-v42.txt
-          cp "$APK" EARA-v42-microphone-fix.apk
-          sha256sum EARA-v42-microphone-fix.apk > EARA-v42-microphone-fix.apk.sha256
-          echo EARA_V42_APK_METADATA=PASS
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: EARA-v42-microphone-fix
-          path: |
-            EARA-v42-microphone-fix.apk
-            EARA-v42-microphone-fix.apk.sha256
-            apk-badging-v42.txt
-          if-no-files-found: error
-          retention-days: 30
+      - run: echo 'v42 is archived. Use the EARA v43 continuous-stream microphone build.'
