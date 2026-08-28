@@ -60,7 +60,7 @@
     this.stop=this.abort;
   }
   const SR=streamMic?StreamSpeechRecognition:(nativeSpeech?NativeSpeechRecognition:(window.SpeechRecognition||window.webkitSpeechRecognition));
-  const WAKE=/^\s*(?:(?:hey|ok|okay)\s+)?(?:eara|era|aira|eira|eera|ear\s+(?:a|uh))\b[\s,.:;!?-]*(.*)$/i;
+  const WAKE=/^\s*(?:(?:hey|ok|okay)\s+)?(?:eara|era|aira|ira|eira|eera|ear\s+(?:a|uh))\b[\s,.:;!?-]*(.*)$/i;
   const ACTIVE_MS=10000;
   const COMMAND_SILENCE_MS=650;
   const PREMIUM_TTS_TIMEOUT_MS=1800;
