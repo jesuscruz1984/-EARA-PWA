@@ -1,0 +1,179 @@
+name: Final Agent v37 Verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/final-v37-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK and Pixel 6 Android 15 image
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "emulator" "platforms;android-35" "system-images;android-35;default;x86_64"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: "9.1.0"
+
+      - name: Build v37 APK
+        working-directory: android-app
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Verify metadata
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" > apk-badging.txt
+          grep -q "package: name='com.eara.ai'" apk-badging.txt
+          grep -q "versionCode='37'" apk-badging.txt
+          grep -q "launchable-activity: name='com.eara.ai.MainActivity'" apk-badging.txt
+          echo APK_METADATA=PASS
+
+      - name: Pixel 6 full final save verification
+        run: |
+          set -euo pipefail
+          APK="$GITHUB_WORKSPACE/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | avdmanager create avd --force --name eara_pixel6_api35 --package "system-images;android-35;default;x86_64" --device pixel_6
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -qx eara_pixel6_api35
+
+          ACCEL=off
+          if [ -e /dev/kvm ]; then
+            sudo chmod 666 /dev/kvm || true
+            if "$ANDROID_HOME/emulator/emulator" -accel-check 2>&1 | grep -qi "is installed and usable"; then ACCEL=on; fi
+          fi
+          "$ANDROID_HOME/emulator/emulator" -avd eara_pixel6_api35 -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back virtualscene -camera-front emulated -accel "$ACCEL" > emulator.log 2>&1 &
+          EMU_PID=$!
+          cleanup(){ adb emu kill >/dev/null 2>&1 || true; kill "$EMU_PID" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          adb start-server
+          for i in $(seq 1 240); do
+            [ "$(adb get-state 2>/dev/null || true)" = device ] && [ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
+            sleep 3
+          done
+          test "$(adb shell getprop sys.boot_completed | tr -d '\r')" = 1
+          echo ANDROID_15_PIXEL6_BOOT=PASS
+          sleep 15
+
+          adb install -r -g "$APK" | tee adb-install.txt
+          grep -q Success adb-install.txt
+          echo APK_INSTALL=PASS
+          adb logcat -c || true
+          adb shell am force-stop com.eara.ai || true
+          adb shell am start -W -n com.eara.ai/.MainActivity | tee launch.txt
+          grep -q 'Status: ok' launch.txt
+          sleep 25
+          test -n "$(adb shell pidof com.eara.ai | tr -d '\r')"
+          adb shell dumpsys activity activities > activity.txt
+          grep -qE "topResumedActivity=.*com\.eara\.ai/.MainActivity|ResumedActivity:.*com\.eara\.ai/.MainActivity" activity.txt
+          echo APP_LAUNCH_FOREGROUND=PASS
+
+          python3 -m pip install --quiet websocket-client
+          SOCKET="$(adb shell cat /proc/net/unix | tr -d '\r' | awk '/webview_devtools_remote/{print $8}' | tail -1 | sed 's/^@//')"
+          test -n "$SOCKET"
+          adb forward tcp:9222 "localabstract:$SOCKET"
+
+          cat > /tmp/final.py <<'PY'
+          import json,time,urllib.request,websocket,subprocess
+          pages=json.load(urllib.request.urlopen('http://127.0.0.1:9222/json',timeout=10))
+          page=next((p for p in pages if 'agent-1.0' in p.get('url','')),pages[0])
+          ws=websocket.create_connection(page['webSocketDebuggerUrl'],timeout=30,suppress_origin=True)
+          i=0
+          def ev(expr,await_promise=False):
+            global i;i+=1
+            ws.send(json.dumps({'id':i,'method':'Runtime.evaluate','params':{'expression':expr,'returnByValue':True,'awaitPromise':await_promise}}))
+            while True:
+              r=json.loads(ws.recv())
+              if r.get('id')!=i: continue
+              if 'exceptionDetails' in r.get('result',{}): raise RuntimeError(r['result']['exceptionDetails'])
+              return r['result']['result'].get('value')
+          end=time.time()+45
+          while time.time()<end:
+            try:
+              if ev("document.readyState==='complete' && window.AgentArtifacts && AgentArtifacts.version==='36' && typeof EARANative==='object'"): break
+            except: pass
+            time.sleep(1)
+          else: raise RuntimeError('Agent frontend/native bridge not ready')
+          print('FRONTEND_NATIVE_BRIDGE=PASS')
+
+          # Recheck the repaired controls in the same final run.
+          assert ev("(()=>{const a=document.querySelector('#attachments');a.classList.remove('show');document.querySelector('#addBtn path').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));return a.classList.contains('show')})()") is True
+          labels=ev("(()=>[document.querySelector('#uploadBtn small')?.textContent,document.querySelector('#phoneCameraBtn small')?.textContent,document.querySelector('#cameraBtn small')?.textContent])()")
+          assert labels==['Upload file','Phone camera','EP6 camera'],labels
+          print('ATTACH_CAMERA_CONTROLS=PASS')
+
+          result=ev("(async()=>{window.__finaldoc=await fetchChat('Create a PDF and Word document titled Final Verification. Include: Agent 1.0 document saving works.','',null);return {route:__finaldoc.route,files:(__finaldoc.files||[]).map(f=>({name:f.name,mime:f.mime,sig:atob(f.data).slice(0,5)}))}})()",True)
+          assert result['route']=='document-draft-v36',result
+          pdf=next(f for f in result['files'] if f['name'].lower().endswith('.pdf'))
+          docx=next(f for f in result['files'] if f['name'].lower().endswith('.docx'))
+          assert pdf['sig'].startswith('%PDF-') and docx['sig'].startswith('PK'),result
+          print('PDF_DOCX_GENERATION=PASS')
+
+          # Critical fix to verification: queue BOTH native saves before Android can open a viewer.
+          saved=ev("(()=>{const p=__finaldoc.files.find(f=>f.name.toLowerCase().endsWith('.pdf'));const w=__finaldoc.files.find(f=>f.name.toLowerCase().endsWith('.docx'));EARANative.saveBase64File(p.name,p.mime,p.data);EARANative.saveBase64File(w.name,w.mime,w.data);return [p.name,w.name]})()")
+          assert len(saved)==2
+          print('BOTH_NATIVE_SAVE_CALLS=PASS',saved)
+          ws.close()
+          PY
+          python3 /tmp/final.py | tee final-cdp.txt
+
+          sleep 8
+          adb shell ls -la /sdcard/Download/Agent1 | tee downloads.txt
+          grep -qi '\.pdf' downloads.txt
+          grep -qi '\.docx' downloads.txt
+          echo NATIVE_PDF_SAVE_TO_DOWNLOADS=PASS
+          echo NATIVE_WORD_SAVE_TO_DOWNLOADS=PASS
+
+          adb shell am start -n com.eara.ai/.MainActivity >/dev/null 2>&1 || true
+          sleep 2
+          adb exec-out screencap -p > agent-v37-final.png
+          test -s agent-v37-final.png
+          adb logcat -d -v time > agent-v37-logcat.txt || true
+          if grep -q 'Process: com.eara.ai' agent-v37-logcat.txt; then exit 1; fi
+          echo NO_AGENT_FATAL_CRASH=PASS
+          echo AGENT_V37_FINAL_VERIFICATION=PASS
+
+      - name: Package verified APK
+        run: |
+          cp android-app/app/build/outputs/apk/debug/app-debug.apk Agent-1.0-ORDRO-EP6-v37.apk
+          sha256sum Agent-1.0-ORDRO-EP6-v37.apk > Agent-1.0-ORDRO-EP6-v37.apk.sha256
+
+      - name: Upload verified APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: Agent-1.0-ORDRO-EP6-v37-FINAL-VERIFIED
+          path: |
+            Agent-1.0-ORDRO-EP6-v37.apk
+            Agent-1.0-ORDRO-EP6-v37.apk.sha256
+            agent-v37-final.png
+            final-cdp.txt
+            downloads.txt
+            agent-v37-logcat.txt
+            activity.txt
+            apk-badging.txt
+          if-no-files-found: error
+          retention-days: 30
