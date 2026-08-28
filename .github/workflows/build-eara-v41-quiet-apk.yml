@@ -1,99 +1,13 @@
-name: Build EARA v41 Quiet Android APK
+name: EARA v41 Quiet Android APK (archived)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "eara-android-app/**"
-      - "handsfree.js"
-      - "index.html"
-      - "sw.js"
-      - ".github/workflows/build-eara-v41-quiet-apk.yml"
 
 permissions:
   contents: read
 
-concurrency:
-  group: eara-v41-quiet-android
-  cancel-in-progress: true
-
 jobs:
-  build:
+  archived:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Verify quiet-listener safeguards
-        run: |
-          set -euo pipefail
-          node --check handsfree.js
-          grep -q "v41 quiet Android listener" handsfree.js
-          grep -q "nativeListening || nativeStarting" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          grep -q "suppressRecognizerAudio" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          grep -q "EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          ! grep -q "if (nativeListening) speechRecognizer.cancel()" eara-android-app/app/src/main/java/com/eara/ai/MainActivity.java
-          grep -q "versionCode = 41" eara-android-app/app/build.gradle.kts
-          echo EARA_V41_QUIET_LISTENER_SOURCE=PASS
-
-      - name: Wait for v41 frontend deployment
-        run: |
-          set -euo pipefail
-          ok=0
-          for i in $(seq 1 40); do
-            if curl -fsSL --max-time 15 "https://jesuscruz1984.github.io/-EARA-PWA/handsfree.js?build=$GITHUB_SHA" | grep -q "v41 quiet Android listener"; then
-              ok=1
-              break
-            fi
-            sleep 5
-          done
-          test "$ok" -eq 1
-          echo EARA_V41_FRONTEND_LIVE=PASS
-
-      - name: Set up Java 17
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "9.1.0"
-          cache-provider: basic
-
-      - name: Build EARA v41 APK
-        working-directory: eara-android-app
-        run: gradle --no-daemon :app:assembleDebug
-
-      - name: Verify and name APK
-        run: |
-          set -euo pipefail
-          APK="eara-android-app/app/build/outputs/apk/debug/app-debug.apk"
-          test -s "$APK"
-          "$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
-          grep -q "package: name='com.eara.ai'" apk-badging.txt
-          grep -q "versionCode='41'" apk-badging.txt
-          grep -q "versionName='41.0-quiet-listener'" apk-badging.txt
-          cp "$APK" EARA-v41-quiet-android.apk
-          sha256sum EARA-v41-quiet-android.apk > EARA-v41-quiet-android.apk.sha256
-          echo EARA_V41_APK_METADATA=PASS
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v7
-        with:
-          name: EARA-v41-quiet-android
-          path: |
-            EARA-v41-quiet-android.apk
-            EARA-v41-quiet-android.apk.sha256
-            apk-badging.txt
-          if-no-files-found: error
-          retention-days: 30
+      - run: echo 'v41 is archived. Use the EARA v42 microphone-owner build.'
