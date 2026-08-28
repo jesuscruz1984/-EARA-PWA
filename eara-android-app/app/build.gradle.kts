@@ -10,8 +10,8 @@ android {
         applicationId = "com.eara.ai"
         minSdk = 26
         targetSdk = 36
-        versionCode = 42
-        versionName = "42.0-mic-owner-fix"
+        versionCode = 43
+        versionName = "43.0-stream-microphone"
     }
 
     buildTypes {
