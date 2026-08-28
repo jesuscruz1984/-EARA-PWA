@@ -76,6 +76,8 @@ jobs:
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "emulator" "${{ matrix.image }}"
+          test -x "$ANDROID_HOME/emulator/emulator"
+          "$ANDROID_HOME/emulator/emulator" -version | head -5
       - uses: actions/download-artifact@v7
         with:
           name: agent-v38-build
@@ -84,19 +86,20 @@ jobs:
         run: |
           set -euo pipefail
           APK="$GITHUB_WORKSPACE/downloaded/android-app/app/build/outputs/apk/debug/app-debug.apk"
+          EMU="$ANDROID_HOME/emulator/emulator"
           AVD="agent_v38_${{ matrix.api }}"
           export ANDROID_AVD_HOME="$GITHUB_WORKSPACE/.android/avd-${{ matrix.api }}"
           mkdir -p "$ANDROID_AVD_HOME"
           echo no | avdmanager create avd --force --name "$AVD" --package "${{ matrix.image }}" --device "${{ matrix.device }}"
-          emulator -list-avds | tee "avds-${{ matrix.label }}.txt"
+          "$EMU" -list-avds | tee "avds-${{ matrix.label }}.txt"
           grep -qx "$AVD" "avds-${{ matrix.label }}.txt"
 
           ACCEL=off
           if [ -e /dev/kvm ]; then
             sudo chmod 666 /dev/kvm || true
-            if emulator -accel-check 2>&1 | grep -qi "usable"; then ACCEL=on; fi
+            if "$EMU" -accel-check 2>&1 | grep -qi "usable"; then ACCEL=on; fi
           fi
-          emulator -avd "$AVD" -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel "$ACCEL" > "emulator-${{ matrix.label }}.log" 2>&1 &
+          "$EMU" -avd "$AVD" -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -accel "$ACCEL" > "emulator-${{ matrix.label }}.log" 2>&1 &
           EPID=$!
           trap 'adb emu kill >/dev/null 2>&1 || true; kill $EPID >/dev/null 2>&1 || true' EXIT
           adb start-server
