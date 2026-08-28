@@ -1,4 +1,4 @@
-// EARA v32 field-visit memory: save audio locally, transcribe continuously, analyze reliably.
+// EARA v42 field-visit memory: avoid competing with Android native hands-free audio.
 (()=>{
   const SESSION_KEY='earaVisitSessionsV1';
   const MEMKEY='earaMemoryV2';
@@ -91,11 +91,22 @@
 
   function clearTimers(){clearTimeout(chunkTimer);clearTimeout(restartTimer);chunkTimer=restartTimer=null}
   function scheduleNext(ms=40){clearTimeout(restartTimer);if(active&&!stopping)restartTimer=setTimeout(beginChunk,ms)}
+  function directMicTrack(){return window.getEaraStream?.()?.getAudioTracks?.()?.find(t=>t.readyState==='live'&&t.enabled!==false)||null}
+  function nativeHandsFreeOwnsMic(){return !!window.EARANative&&!directMicTrack()}
+  function pauseNativeVisit(){
+    clearTimers();active=false;stopping=false;
+    if(current){current.active=false;current.updatedAt=Date.now();current.pausedReason='android-native-hands-free';persistSession()}
+    updateUi();renderVisitPanel();state('Listening for “Eara” — Android microphone ready.');badge('Eara Ready');chip('SMART AI');
+    setTimeout(()=>window.forceEaraListening?.(),80);
+  }
   function beginChunk(){
     if(!active||stopping||recorder)return;
     clearTimeout(chunkTimer);
-    const stream=window.getEaraStream?.(),track=stream?.getAudioTracks?.()?.[0];
-    if(!track||track.enabled===false){state('Visit Memory ON — waiting for microphone…');scheduleNext(900);return}
+    const track=directMicTrack();
+    if(!track){
+      if(nativeHandsFreeOwnsMic()){pauseNativeVisit();return}
+      state('Visit Memory ON — waiting for microphone…');scheduleNext(1400);return
+    }
     const sessionId=current?.id;if(!sessionId)return;
     const seq=(current.nextSeq||1);current.nextSeq=seq+1;persistSession();
     try{
@@ -122,6 +133,10 @@
 
   function start(){
     if(!window.MediaRecorder){const msg='This browser cannot run Visit Memory audio recording.';setReply(msg);window.say?.(msg);return}
+    if(nativeHandsFreeOwnsMic()){
+      const msg='Android hands-free listening is using the microphone. EARA is ready for the wake word, but Visit Memory recording is paused in this build.';
+      pauseNativeVisit();setReply(msg,msg);return
+    }
     const existing=nowSession();
     current=existing||{id:'visit-'+Date.now(),active:true,startedAt:Date.now(),updatedAt:Date.now(),transcript:'',summary:'',audioSegments:0,audioBytes:0,transcribedSegments:0,transcriptionErrors:0,nextSeq:1};
     current.active=true;active=true;stopping=false;persistSession();updateUi();renderVisitPanel();state('Visit Memory ON — audio is being saved and transcribed.');badge('Recording Visit');chip('VISIT RECORDING');beginChunk();
@@ -268,6 +283,7 @@
   document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){installUi();wrapAsk();if(active&&!recorder)beginChunk()}else if(active)state('Visit Memory may pause while EARA is in the background.')});
   document.querySelectorAll('nav button').forEach(b=>b.addEventListener('click',()=>{if(b.dataset.tab==='memory')setTimeout(renderVisitPanel,50)}));
 
-  const resume=nowSession();if(resume){current=resume;active=true}
+  const resume=nowSession();if(resume){current=resume;if(nativeHandsFreeOwnsMic())pauseNativeVisit();else active=true}
   setTimeout(()=>{installUi();wrapAsk();if(active)beginChunk()},120);
 })();
+
